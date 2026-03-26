@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+*.egg-info/
+
+# Output plots (generated at runtime — don't track)
+plots_cross_cohort/
+plots_mcrpc/
+plots_presentation/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Editor / OS
+.vscode/
+.idea/
+*.DS_Store
+
+# Data files (large, sensitive — keep off GitHub)
+*.h5
+*.hdf5
+*.feather
+*.parquet
+/data/
