@@ -21,6 +21,10 @@ GTEX_FILE       = '/mnt/biodata/data/raw/normalprost_GTEx/gene_tpm_v11_prostate.
 TCGA_NORMAL_DIR = '/mnt/biodata/data/processed/tcga_prad_normal'
 MHSPC_FILE      = '/mnt/biodata/data/processed/mhspc_gse221601/expression_log2tpm.tsv'
 
+# mHSPC microarray (Davicioni collaboration) — populate when files arrive:
+MHSPC_ARRAY_EXPR = '/mnt/biodata/data/processed/mhspc_array/mhspc_m6a_expression.tsv'
+MHSPC_ARRAY_META = '/mnt/biodata/data/processed/mhspc_array/mhspc_m6a_metadata.tsv'
+
 # Convenience sub-paths (used by loaders)
 MCRPC_LOG2CPM       = os.path.join(MCRPC_DIR,       'LumBasal_mCRPC_RNAseq_CLEANED_LOG2CPM.tsv')
 MCRPC_META_CSV      = os.path.join(MCRPC_DIR,       'LumBasal_mCRPC.csv')
@@ -34,6 +38,7 @@ TCGA_NORMAL_LOG2CPM = os.path.join(TCGA_NORMAL_DIR, 'expression_log2cpm.tsv')
 OUTDIR_CROSS_COHORT = os.path.join(_HERE, 'plots_cross_cohort')
 OUTDIR_MCRPC        = os.path.join(_HERE, 'plots_mcrpc')
 OUTDIR_PRESENTATION = os.path.join(_HERE, 'plots_presentation')
+OUTDIR_AR_M6A       = os.path.join(_HERE, 'plots_ar_m6a')
 
 # ── Cross-cohort group definitions (6 cohorts, in progression order) ─────────
 GROUP_LABELS = [

@@ -163,6 +163,34 @@ def load_mcspc():
     return expr, None
 
 
+def load_mhspc_microarray(expr_file, meta_file=None):
+    """
+    Load mHSPC microarray data extracted by the collaborator via extract_mhspc_m6a.R.
+
+    Expected input format (produced by the R script):
+        expr_file : TSV, samples × m6A genes, first column = 'sample_id'.
+                    Values are log2 microarray intensities (RMA-normalized).
+        meta_file : TSV or CSV, first column = 'sample_id', clinical annotations.
+
+    Returns
+    -------
+    expr_df : DataFrame (samples × genes), log2 intensities.
+    meta_df : DataFrame or None.
+    """
+    expr = pd.read_csv(expr_file, sep='\t', index_col=0)
+    expr.index.name = 'sample_id'
+    print(f"    mHSPC microarray: {expr.shape[0]} samples × {expr.shape[1]} genes")
+
+    meta = None
+    if meta_file is not None:
+        sep = '\t' if str(meta_file).endswith('.tsv') else ','
+        meta = pd.read_csv(meta_file, sep=sep, index_col=0)
+        meta.index.name = 'sample_id'
+        print(f"    mHSPC metadata:   {meta.shape[0]} samples × {meta.shape[1]} columns")
+
+    return expr, meta
+
+
 def build_common_universe(expr_dfs):
     """
     Return the sorted list of genes present in ALL provided expression DataFrames.
