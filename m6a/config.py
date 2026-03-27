@@ -22,7 +22,7 @@ TCGA_NORMAL_DIR = '/mnt/biodata/data/processed/tcga_prad_normal'
 MHSPC_FILE      = '/mnt/biodata/data/processed/mhspc_gse221601/expression_log2tpm.tsv'
 
 # mHSPC microarray (Davicioni collaboration) — populate when files arrive:
-MHSPC_ARRAY_EXPR = '/mnt/biodata/data/processed/mhspc_array/mhspc_m6a_expression.tsv'
+MHSPC_ARRAY_EXPR = '/mnt/biodata/data/processed/mhspc_array/mhspc_expression_full.tsv.gz'
 MHSPC_ARRAY_META = '/mnt/biodata/data/processed/mhspc_array/mhspc_m6a_metadata.tsv'
 
 # Convenience sub-paths (used by loaders)

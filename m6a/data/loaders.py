@@ -168,16 +168,21 @@ def load_mhspc_microarray(expr_file, meta_file=None):
     Load mHSPC microarray data extracted by the collaborator via extract_mhspc_m6a.R.
 
     Expected input format (produced by the R script):
-        expr_file : TSV, samples × m6A genes, first column = 'sample_id'.
+        expr_file : TSV or TSV.GZ, samples × ALL genes (full genome),
+                    first column = 'sample_id'.
                     Values are log2 microarray intensities (RMA-normalized).
+                    The full genome matrix is required so that within-sample
+                    percentile ranks use the same ~15k-gene denominator as
+                    the RNA-seq cohorts (platform-invariant after ranking).
         meta_file : TSV or CSV, first column = 'sample_id', clinical annotations.
 
     Returns
     -------
-    expr_df : DataFrame (samples × genes), log2 intensities.
+    expr_df : DataFrame (samples × genes), log2 intensities — full genome.
     meta_df : DataFrame or None.
     """
-    expr = pd.read_csv(expr_file, sep='\t', index_col=0)
+    expr = pd.read_csv(expr_file, sep='\t', index_col=0,
+                       compression='infer')   # handles .gz automatically
     expr.index.name = 'sample_id'
     print(f"    mHSPC microarray: {expr.shape[0]} samples × {expr.shape[1]} genes")
 

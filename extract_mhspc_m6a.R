@@ -10,8 +10,6 @@
 #   mhspc_m6a_expression.tsv  — normalized log2 expression, m6A genes only
 #   mhspc_m6a_metadata.tsv   — clinical/metadata annotations per sample
 #
-# USAGE (from R console or terminal):
-#   Rscript extract_mhspc_m6a.R
 #
 # REQUIRES: oligo OR affy (if CEL files), or just base R (if already processed)
 #   install.packages(c("BiocManager"))
@@ -192,13 +190,50 @@ if (is_symbol) {
 
 cat("  Genes extracted:", paste(sort(unique(gene_expr_df$gene)), collapse = ", "), "\n")
 
-# Reshape to samples × genes (wide format)
-gene_expr_wide <- as.data.frame(t(gene_expr_df[, !colnames(gene_expr_df) %in% "gene"]))
-colnames(gene_expr_wide) <- gene_expr_df$gene
-gene_expr_wide$sample_id <- rownames(gene_expr_wide)
-# Clean up sample IDs (strip .CEL suffix if present)
-gene_expr_wide$sample_id <- sub("\\.CEL$", "", gene_expr_wide$sample_id,
-                                 ignore.case = TRUE)
+# Reshape to samples × genes — keep ALL genes from the full matrix for
+# proper within-sample percentile ranking in the Python pipeline.
+# The m6A genes were already confirmed present in the extraction above.
+if (is_symbol) {
+  # expr_matrix already has all genes as rows
+  full_expr_wide <- as.data.frame(t(expr_matrix))
+  full_expr_wide$sample_id <- rownames(full_expr_wide)
+  full_expr_wide$sample_id <- sub("\\.CEL$", "", full_expr_wide$sample_id,
+                                   ignore.case = TRUE)
+  gene_expr_wide <- full_expr_wide
+} else if (exists("gene_expr_mat")) {
+  # We mapped probes → gene symbols for m6A genes;
+  # now also collapse ALL probes → gene symbols for the full matrix
+  cat("  Collapsing all probes to gene symbols for full-genome output...\n")
+  full_map <- AnnotationDbi::select(db,
+                                    keys    = rownames(expr_matrix),
+                                    columns = c("PROBEID", "SYMBOL"),
+                                    keytype = "PROBEID")
+  full_map <- full_map[!is.na(full_map$SYMBOL) & full_map$SYMBOL != "", ]
+  # Average probes mapping to the same gene symbol
+  unique_genes <- unique(full_map$SYMBOL)
+  cat("  Collapsing", nrow(expr_matrix), "probes →", length(unique_genes), "genes\n")
+  expr_list_full <- lapply(unique_genes, function(gene) {
+    probes <- full_map$PROBEID[full_map$SYMBOL == gene]
+    sub_m  <- expr_matrix[rownames(expr_matrix) %in% probes, , drop = FALSE]
+    if (nrow(sub_m) > 1) colMeans(sub_m) else sub_m[1, ]
+  })
+  full_gene_mat           <- do.call(rbind, expr_list_full)
+  rownames(full_gene_mat) <- unique_genes
+  full_expr_wide          <- as.data.frame(t(full_gene_mat))
+  full_expr_wide$sample_id <- rownames(full_expr_wide)
+  full_expr_wide$sample_id <- sub("\\.CEL$", "", full_expr_wide$sample_id,
+                                   ignore.case = TRUE)
+  gene_expr_wide <- full_expr_wide
+} else {
+  # Fallback: only the m6A-matched rows available
+  gene_expr_wide <- as.data.frame(t(gene_expr_df[, !colnames(gene_expr_df) %in% "gene"]))
+  colnames(gene_expr_wide) <- gene_expr_df$gene
+  gene_expr_wide$sample_id <- rownames(gene_expr_wide)
+  gene_expr_wide$sample_id <- sub("\\.CEL$", "", gene_expr_wide$sample_id,
+                                   ignore.case = TRUE)
+  cat("  WARNING: Only", ncol(gene_expr_wide) - 1,
+      "genes in output (fallback mode). Percentile ranks will be approximate.\n")
+}
 
 # =============================================================================
 # STEP 3: Load metadata and merge
@@ -228,37 +263,48 @@ if (file.exists(METADATA_FILE)) {
 # =============================================================================
 # STEP 4: Write outputs
 # =============================================================================
-expr_out <- file.path(OUT_DIR, "mhspc_m6a_expression.tsv")
+# IMPORTANT: We output the FULL genome expression matrix (all genes), not just
+# the 22 m6A genes.  The Python analysis uses within-sample percentile ranking
+# (each gene ranked against ~15,000 genes in that sample), so the full matrix
+# is required to compute comparable ranks across platforms (array vs. RNA-seq).
+# The file is ~100 MB gzipped — please send via Dropbox/WeTransfer/OneDrive.
+expr_out <- file.path(OUT_DIR, "mhspc_expression_full.tsv.gz")
 meta_out <- file.path(OUT_DIR, "mhspc_m6a_metadata.tsv")
 
-# Expression output (samples × m6A genes only)
-expr_cols  <- c("sample_id", intersect(M6A_GENES, colnames(merged)))
-meta_cols  <- setdiff(colnames(merged), intersect(M6A_GENES, colnames(merged)))
-meta_cols  <- meta_cols[meta_cols != "sample_id"]
+# Separate expression columns from metadata columns
+all_gene_cols <- colnames(gene_expr_wide)[colnames(gene_expr_wide) != "sample_id"]
+meta_only_cols <- setdiff(colnames(merged),
+                          c("sample_id", all_gene_cols))
 
-expr_final <- merged[, expr_cols, drop = FALSE]
-write.table(expr_final, file = expr_out, sep = "\t", row.names = FALSE, quote = FALSE)
+# Full genome expression (samples × all genes)
+expr_final <- merged[, c("sample_id", all_gene_cols), drop = FALSE]
+con <- gzcon(file(expr_out, "wb"))
+write.table(expr_final, file = con, sep = "\t", row.names = FALSE, quote = FALSE)
+close(con)
 cat("\n→ Expression saved:", expr_out,
-    "(", nrow(expr_final), "samples ×", ncol(expr_final) - 1, "genes )\n")
+    "(", nrow(expr_final), "samples ×", length(all_gene_cols), "genes, gzipped )\n")
 
-if (length(meta_cols) > 0) {
-  meta_final <- merged[, c("sample_id", meta_cols), drop = FALSE]
+# Metadata only
+if (length(meta_only_cols) > 0) {
+  meta_final <- merged[, c("sample_id", meta_only_cols), drop = FALSE]
   write.table(meta_final, file = meta_out, sep = "\t", row.names = FALSE, quote = FALSE)
   cat("→ Metadata saved: ", meta_out,
-      "(", nrow(meta_final), "samples ×", length(meta_cols), "columns )\n")
+      "(", nrow(meta_final), "samples ×", length(meta_only_cols), "columns )\n")
 }
 
 # Summary report
 cat("\n=== SUMMARY ===\n")
 cat("Samples:", nrow(expr_final), "\n")
-cat("m6A genes found (", length(expr_cols) - 1, "/", length(M6A_GENES), "):\n")
-found_g   <- intersect(M6A_GENES, colnames(expr_final))
-missing_g <- setdiff(M6A_GENES, colnames(expr_final))
+cat("Total genes in matrix:", length(all_gene_cols), "\n")
+found_g   <- intersect(M6A_GENES, all_gene_cols)
+missing_g <- setdiff(M6A_GENES, all_gene_cols)
+cat("m6A genes present (", length(found_g), "/", length(M6A_GENES), "):\n")
 cat("  Found:  ", paste(found_g,   collapse = ", "), "\n")
 if (length(missing_g) > 0)
   cat("  Missing:", paste(missing_g, collapse = ", "), "\n")
 
-cat("\nPlease send both output files to miguel.lerma@med.lu.se:\n")
-cat(" 1. mhspc_m6a_expression.tsv\n")
+cat("\nPlease send both output files to miguel.lerma@med.lu.se\n")
+cat("(use Dropbox/WeTransfer for the gzipped expression file):\n")
+cat(" 1. mhspc_expression_full.tsv.gz  (~100 MB)\n")
 cat(" 2. mhspc_m6a_metadata.tsv\n")
 cat("=================\n")
