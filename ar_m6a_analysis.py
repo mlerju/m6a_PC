@@ -16,6 +16,7 @@ Analysis structure:
   Part VII  — Site-stratified AR activity (23–25)
   Part VIII — AR receptor & bypass mechanisms (26–29)
   Part IX   — Cross-cohort AR activity trajectory (30–32)
+  Part X    — Confound-controlled AR × m6A: Adeno-only + partial corr + mediation (33–38)
 
 Output: plots_ar_m6a/
 
@@ -1475,6 +1476,435 @@ plt.savefig(os.path.join(OUTDIR, '32_AR_target_gene_percentile_heatmap.png'),
 print("  → Saved: 32_AR_target_gene_percentile_heatmap.png")
 plt.close()
 
+# ===========================================================================
+# PART X — CONFOUND-CONTROLLED AR × m6A ANALYSIS
+# ===========================================================================
+# Three sequential deconfounding steps:
+#   1. Restrict to Adenocarcinoma only (remove SCNC as a confounder)
+#   2. Partial Spearman correlation controlling for Luminal/Basal cluster
+#   3. Bootstrapped mediation: ARS → RBM15B → m6A Functional Impact
+# ===========================================================================
+print("\n" + "=" * 80)
+print("  PART X — CONFOUND-CONTROLLED AR × m6A ANALYSIS")
+print("=" * 80)
+
+# ── Adenocarcinoma-only subsets ───────────────────────────────────────────────
+idx_adeno_surv = idx_adeno.intersection(
+    meta[['AR_Activity_Score', 'm6A_Functional_Impact',
+          'm6A_Net_Deposition', 'm6A_Oncogenic_Readout']].dropna().index
+)
+meta_adeno  = meta.loc[idx_adeno_surv]
+z_adeno     = z_all.loc[idx_adeno_surv]
+ars_adeno_s = meta_adeno['AR_Activity_Score']
+
+print(f"\n  Adenocarcinoma-only subset: n={len(idx_adeno_surv)}")
+print(f"  (removed {len(df.index) - len(idx_adeno_surv)} non-Adeno / missing-data samples)")
+
+
+# ── Helper: partial Spearman ρ (residual method) ──────────────────────────────
+from scipy.stats import rankdata as _rankdata
+from scipy.stats import pearsonr as _pearsonr
+
+def partial_spearman(x, y, z_covar):
+    """
+    Partial Spearman ρ of x and y controlling for z_covar.
+    Method: rank x and y, regress out z_covar from both rank vectors
+    via OLS, then Pearson-correlate the residuals.
+    Assumes all three are aligned Series or arrays.
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    z = np.asarray(z_covar, dtype=float)
+    # Remove any row with NaN
+    mask = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
+    x, y, z = x[mask], y[mask], z[mask]
+    # Rank
+    rx = _rankdata(x, method='average') / len(x)
+    ry = _rankdata(y, method='average') / len(y)
+    # Regress z out of rx and ry (via OLS, z as the single predictor)
+    Z = np.column_stack([np.ones(len(z)), z])
+    def _resid(v):
+        coef, *_ = np.linalg.lstsq(Z, v, rcond=None)
+        return v - Z @ coef
+    resid_x = _resid(rx)
+    resid_y = _resid(ry)
+    r, p = _pearsonr(resid_x, resid_y)
+    return r, p, int(mask.sum())
+
+
+# ── Luminal/Basal numeric covariate ──────────────────────────────────────────
+lb_num = meta_adeno['Luminal/Basal Cluster'].map({'Luminal': 1, 'Basal': 0})
+# Only keep samples with known L/B assignment
+idx_lb = lb_num.dropna().index
+meta_lb   = meta_adeno.loc[idx_lb]
+z_lb      = z_adeno.loc[idx_lb]
+ars_lb    = ars_adeno_s.loc[idx_lb]
+lb_covar  = lb_num.loc[idx_lb].values
+print(f"  Adeno with Luminal/Basal assigned: n={len(idx_lb)} "
+      f"(Lum={lb_covar.sum():.0f}, Bas={(lb_covar==0).sum():.0f})")
+
+
+# --- 33. Per-gene AR correlations: full vs Adeno-only vs partial -------------
+print("\n--- Plot 33: Per-gene AR corr — full / Adeno-only / partial ---")
+rows_partcorr = []
+for gene in gene_order:
+    # Full cohort
+    r_full, p_full = spearmanr(z_all.loc[ars.index, gene], ars)
+    # Adeno-only
+    r_adeno, p_adeno = spearmanr(z_adeno[gene], ars_adeno_s)
+    # Partial (Adeno + Luminal/Basal covariate)
+    r_part, p_part, n_part = partial_spearman(
+        z_lb[gene].values, ars_lb.values, lb_covar
+    )
+    rows_partcorr.append({
+        'Gene': gene, 'Role': gene_roles[gene],
+        'rho_full': r_full, 'p_full': p_full,
+        'rho_adeno': r_adeno, 'p_adeno': p_adeno,
+        'rho_partial': r_part, 'p_partial': p_part,
+    })
+
+pc_df = pd.DataFrame(rows_partcorr)
+print(f"\n  {'Gene':10s} {'ρ full':>8s}{'':3s} {'ρ Adeno':>8s}{'':3s} "
+      f"{'ρ partial':>9s}{'':3s}  (partial = Adeno + L/B covariate)")
+print("  " + "-" * 70)
+for _, r in pc_df.iterrows():
+    print(f"  {r['Gene']:10s} "
+          f"{r['rho_full']:+8.3f}{sig(r['p_full']):3s} "
+          f"{r['rho_adeno']:+8.3f}{sig(r['p_adeno']):3s} "
+          f"{r['rho_partial']:+9.3f}{sig(r['p_partial']):3s}")
+
+# Plot: grouped barplot with three bars per gene
+fig, ax = plt.subplots(figsize=(15, 6))
+n_genes = len(pc_df)
+x       = np.arange(n_genes)
+w       = 0.26
+bars = [
+    ax.bar(x - w, pc_df['rho_full'],    w, label='Full cohort',
+           color='#95a5a6', edgecolor='black', alpha=0.9),
+    ax.bar(x,     pc_df['rho_adeno'],   w, label='Adeno only',
+           color='#3498db', edgecolor='black', alpha=0.9),
+    ax.bar(x + w, pc_df['rho_partial'], w, label='Adeno + partial (L/B)',
+           color='#e74c3c', edgecolor='black', alpha=0.9),
+]
+# Significance markers on partial bars
+for i, r in pc_df.iterrows():
+    if sig(r['p_partial']) != 'ns':
+        y_top = r['rho_partial'] + (0.025 if r['rho_partial'] >= 0 else -0.04)
+        ax.text(i + w, y_top, sig(r['p_partial']),
+                ha='center', va='bottom' if r['rho_partial'] >= 0 else 'top',
+                fontsize=8, fontweight='bold', color='#c0392b')
+ax.axhline(0, color='black', lw=0.8)
+ax.set_xticks(x)
+ax.set_xticklabels(
+    [f"{r['Gene']}\n({r['Role'].split('(')[1].rstrip(')') if '(' in r['Role'] else r['Role']})"
+     for _, r in pc_df.iterrows()],
+    fontsize=8, rotation=30, ha='right',
+)
+ax.set_ylabel('Spearman ρ with AR Activity Score', fontsize=12, fontweight='bold')
+ax.set_title(
+    'Per-gene m6A × AR Correlation: Full Cohort vs Adeno-only vs Partial (Luminal/Basal controlled)\n'
+    'Red bars = after removing both SCNC confound and Luminal/Basal lineage effect',
+    fontsize=12, fontweight='bold', pad=12)
+ax.legend(fontsize=10)
+plt.tight_layout()
+plt.savefig(os.path.join(OUTDIR, '33_per_gene_AR_corr_deconfounded.png'), dpi=300, bbox_inches='tight')
+print("  → Saved: 33_per_gene_AR_corr_deconfounded.png")
+plt.close()
+
+
+# --- 34. ARS vs m6A axes: Adeno-only scatters --------------------------------
+print("\n--- Plot 34: ARS vs m6A axes — Adeno only ---")
+fig, axes34 = plt.subplots(1, 3, figsize=(18, 6))
+cmap_lb_adeno = meta_adeno['Luminal/Basal Cluster'].map(
+    {'Luminal': '#2980b9', 'Basal': '#c0392b'}).fillna('grey')
+
+for ax, (col, label) in zip(axes34, [
+    ('m6A_Net_Deposition',    'Net m6A Deposition'),
+    ('m6A_Oncogenic_Readout', 'Oncogenic Readout'),
+    ('m6A_Functional_Impact', 'Functional Impact'),
+]):
+    x = meta_adeno['AR_Activity_Score'].values
+    y = meta_adeno[col].values
+    mask = np.isfinite(x) & np.isfinite(y)
+    r, p = spearmanr(x[mask], y[mask])
+    ax.scatter(x, y, c=cmap_lb_adeno.reindex(meta_adeno.index).values,
+               alpha=0.45, s=18, edgecolors='none')
+    m_f, b_f = np.polyfit(x[mask], y[mask], 1)
+    x_l = np.linspace(x[mask].min(), x[mask].max(), 100)
+    ax.plot(x_l, m_f * x_l + b_f, 'k-', lw=2, alpha=0.7)
+    ax.set_xlabel('AR Activity Score', fontsize=11, fontweight='bold')
+    ax.set_ylabel(label, fontsize=11, fontweight='bold')
+    ax.set_title(f'{label} (Adeno only, n={mask.sum()})\nρ={r:+.3f}, p={p:.2e} {sig(p)}',
+                 fontsize=12, fontweight='bold')
+    ax.axhline(0, color='grey', lw=0.5, ls='--', alpha=0.5)
+    ax.axvline(0, color='grey', lw=0.5, ls='--', alpha=0.5)
+    print(f"  Adeno-only {col[:22]:22s}: ρ={r:+.3f}, p={p:.2e} {sig(p)}")
+
+axes34[0].legend(handles=[
+    Patch(facecolor='#2980b9', label='Luminal'),
+    Patch(facecolor='#c0392b', label='Basal'),
+    Patch(facecolor='grey',    label='Unassigned')], fontsize=9)
+plt.suptitle('AR Activity Score vs m6A Axes — Adenocarcinoma Only (SCNC removed)\n'
+             'Colored by Luminal/Basal subtype',
+             fontsize=14, fontweight='bold', y=1.02)
+plt.tight_layout()
+plt.savefig(os.path.join(OUTDIR, '34_ARS_vs_axes_adeno_only.png'), dpi=300, bbox_inches='tight')
+print("  → Saved: 34_ARS_vs_axes_adeno_only.png")
+plt.close()
+
+
+# --- 35. Partial Spearman: ARS vs m6A axes, controlling Luminal/Basal --------
+print("\n--- Plot 35: Partial Spearman ARS vs axes (partial L/B covariate) ---")
+axes_triples = [
+    ('m6A_Net_Deposition',    'Net m6A Deposition'),
+    ('m6A_Oncogenic_Readout', 'Oncogenic Readout'),
+    ('m6A_Functional_Impact', 'Functional Impact'),
+]
+results_partial = []
+for col, label in axes_triples:
+    # Raw (full)
+    shared_f = ars.index.intersection(meta[col].dropna().index)
+    r_f, p_f = spearmanr(ars.loc[shared_f], meta.loc[shared_f, col])
+    # Adeno only
+    r_a, p_a = spearmanr(ars_adeno_s, meta_adeno[col])
+    # Partial (Adeno + L/B)
+    r_p, p_p, n_p = partial_spearman(
+        ars_lb.values, meta_lb[col].values, lb_covar
+    )
+    results_partial.append({
+        'axis': label,
+        'rho_full': r_f, 'p_full': p_f,
+        'rho_adeno': r_a, 'p_adeno': p_a,
+        'rho_partial': r_p, 'p_partial': p_p, 'n_partial': n_p,
+    })
+    print(f"  {label:25s}  "
+          f"full: ρ={r_f:+.3f}{sig(p_f):3s}  "
+          f"Adeno: ρ={r_a:+.3f}{sig(p_a):3s}  "
+          f"partial: ρ={r_p:+.3f}{sig(p_p):3s} (n={n_p})")
+
+rp_df = pd.DataFrame(results_partial)
+
+# Grouped barplot
+fig, ax = plt.subplots(figsize=(10, 6))
+x35  = np.arange(len(rp_df))
+w35  = 0.26
+ax.bar(x35 - w35, rp_df['rho_full'],    w35, label='Full cohort',
+       color='#95a5a6', edgecolor='black', alpha=0.9)
+ax.bar(x35,        rp_df['rho_adeno'],   w35, label='Adeno only',
+       color='#3498db', edgecolor='black', alpha=0.9)
+ax.bar(x35 + w35,  rp_df['rho_partial'], w35, label='Adeno + partial (L/B)',
+       color='#e74c3c', edgecolor='black', alpha=0.9)
+# Annotate each group
+for i, r in rp_df.iterrows():
+    for val, xctr, p_v, clr in [
+        (r['rho_full'],    x35[i] - w35, r['p_full'],    '#7f8c8d'),
+        (r['rho_adeno'],   x35[i],       r['p_adeno'],   '#2980b9'),
+        (r['rho_partial'], x35[i] + w35, r['p_partial'], '#c0392b'),
+    ]:
+        yoff = val + (0.018 if val >= 0 else -0.03)
+        ax.text(xctr, yoff, sig(p_v), ha='center',
+                va='bottom' if val >= 0 else 'top', fontsize=9,
+                fontweight='bold', color=clr)
+ax.axhline(0, color='black', lw=0.8)
+ax.set_xticks(x35)
+ax.set_xticklabels(rp_df['axis'], fontsize=12, fontweight='bold')
+ax.set_ylabel('Spearman ρ with AR Activity Score', fontsize=12, fontweight='bold')
+ax.set_title(
+    'AR Activity vs m6A Axes: Full → Adeno-only → Partial (L/B controlled)\n'
+    'How much correlation survives after removing confounders?',
+    fontsize=13, fontweight='bold', pad=12)
+ax.legend(fontsize=10)
+ax.set_ylim(min(rp_df[['rho_full','rho_adeno','rho_partial']].values.min() - 0.08, -0.05),
+            max(rp_df[['rho_full','rho_adeno','rho_partial']].values.max() + 0.08,  0.05))
+plt.tight_layout()
+plt.savefig(os.path.join(OUTDIR, '35_partial_spearman_ARS_axes.png'), dpi=300, bbox_inches='tight')
+print("  → Saved: 35_partial_spearman_ARS_axes.png")
+plt.close()
+
+
+# --- 36. RBM15B within Luminal and Basal separately --------------------------
+print("\n--- Plot 36: RBM15B vs ARS within Luminal / Basal separately ---")
+fig, axes36 = plt.subplots(1, 2, figsize=(14, 6))
+
+for ax, (subset_name, subset_idx, color) in zip(axes36, [
+    ('Luminal', idx_lum.intersection(idx_adeno), '#2980b9'),
+    ('Basal',   idx_bas.intersection(idx_adeno), '#c0392b'),
+]):
+    x_s = ars.loc[subset_idx].dropna()
+    y_s = z_all.loc[x_s.index, 'RBM15B']
+    r_s, p_s = spearmanr(x_s, y_s)
+    ax.scatter(x_s, y_s, c=color, alpha=0.45, s=22, edgecolors='none')
+    m_s, b_s = np.polyfit(x_s.values, y_s.values, 1)
+    x_line = np.linspace(x_s.min(), x_s.max(), 100)
+    ax.plot(x_line, m_s * x_line + b_s, 'k-', lw=2)
+    ax.set_xlabel('AR Activity Score', fontsize=11, fontweight='bold')
+    ax.set_ylabel('RBM15B z-score', fontsize=11, fontweight='bold')
+    ax.set_title(f'RBM15B vs ARS — Adeno/{subset_name} (n={len(x_s)})\n'
+                 f'ρ={r_s:+.3f}, p={p_s:.2e} {sig(p_s)}',
+                 fontsize=12, fontweight='bold')
+    ax.axhline(0, color='grey', lw=0.5, ls='--', alpha=0.5)
+    ax.axvline(0, color='grey', lw=0.5, ls='--', alpha=0.5)
+    print(f"  RBM15B vs ARS in Adeno/{subset_name}: ρ={r_s:+.3f}, p={p_s:.2e} {sig(p_s)}")
+
+plt.suptitle('RBM15B × AR Activity within Luminal and Basal Adenocarcinoma\n'
+             'Tests whether the RBM15B signal is lineage-dependent',
+             fontsize=13, fontweight='bold', y=1.02)
+plt.tight_layout()
+plt.savefig(os.path.join(OUTDIR, '36_RBM15B_ARS_by_lineage.png'), dpi=300, bbox_inches='tight')
+print("  → Saved: 36_RBM15B_ARS_by_lineage.png")
+plt.close()
+
+
+# --- 37-38. Mediation: ARS → RBM15B → m6A Functional Impact -----------------
+print("\n--- Plots 37-38: Mediation ARS → RBM15B → m6A FI (bootstrap) ---")
+# Restrict to Adeno-only, complete cases
+med_cols = ['AR_Activity_Score', 'm6A_Functional_Impact']
+med_idx  = meta_adeno[med_cols].dropna().index.intersection(z_adeno.index)
+X_med  = meta_adeno.loc[med_idx, 'AR_Activity_Score'].values   # Independent
+M_med  = z_adeno.loc[med_idx, 'RBM15B'].values                 # Mediator
+Y_med  = meta_adeno.loc[med_idx, 'm6A_Functional_Impact'].values  # Outcome
+n_med  = len(X_med)
+
+# Standardise for comparable coefficients
+def _std(v): return (v - v.mean()) / v.std()
+X_s = _std(X_med)
+M_s = _std(M_med)
+Y_s = _std(Y_med)
+
+from scipy.stats import t as _t_dist
+from sklearn.linear_model import LinearRegression as _LinReg
+
+def _ols(x_mat, y_vec):
+    """Return (coef_vector, se_vector, p_vector) for OLS."""
+    X_ = np.column_stack([np.ones(len(y_vec)), x_mat])
+    coef_, *_ = np.linalg.lstsq(X_, y_vec, rcond=None)
+    resid = y_vec - X_ @ coef_
+    mse   = (resid**2).sum() / (len(y_vec) - X_.shape[1])
+    cov   = mse * np.linalg.inv(X_.T @ X_)
+    se    = np.sqrt(np.diag(cov))
+    t_stat = coef_ / se
+    p_vals = 2 * _t_dist.sf(np.abs(t_stat), df=len(y_vec) - X_.shape[1])
+    return coef_[1:], se[1:], p_vals[1:]  # skip intercept
+
+# Path a: X → M
+a_coef, a_se, a_p = _ols(X_s.reshape(-1,1), M_s)
+# Path b: M → Y (controlling X)
+b_coef, b_se, b_p = _ols(np.column_stack([M_s, X_s]), Y_s)
+# Total effect c: X → Y
+c_coef, c_se, c_p = _ols(X_s.reshape(-1,1), Y_s)
+# Direct effect c': X → Y controlling M
+cp_coef = b_coef[1:2]  # coefficient of X in the M+X → Y regression
+cp_coef, cp_se, cp_p = _ols(np.column_stack([X_s, M_s]), Y_s)
+cp_coef, cp_se, cp_p = cp_coef[:1], cp_se[:1], cp_p[:1]
+
+a = float(a_coef[0])
+b = float(b_coef[0])
+c = float(c_coef[0])
+cp_val = float(cp_coef[0])
+indirect = a * b
+print(f"  Path a (ARS → RBM15B):              β={a:+.4f}, p={a_p[0]:.3e} {sig(a_p[0])}")
+print(f"  Path b (RBM15B → FI | ARS):         β={b:+.4f}, p={b_p[0]:.3e} {sig(b_p[0])}")
+print(f"  Total effect c (ARS → FI):          β={c:+.4f}, p={c_p[0]:.3e} {sig(c_p[0])}")
+print(f"  Direct effect c' (ARS → FI | RBM15B): β={cp_val:+.4f}, p={cp_p[0]:.3e} {sig(cp_p[0])}")
+print(f"  Indirect effect a*b:                β={indirect:+.4f}")
+print(f"  Proportion mediated: {abs(indirect/c)*100:.1f}%" if abs(c) > 1e-9 else "")
+
+# Bootstrap 95% CI for indirect effect
+rng = np.random.default_rng(2025)
+N_BOOT = 5000
+boot_indirect = []
+for _ in range(N_BOOT):
+    idx_b   = rng.integers(0, n_med, n_med)
+    Xb, Mb, Yb = X_s[idx_b], M_s[idx_b], Y_s[idx_b]
+    a_b, *_ = _ols(Xb.reshape(-1,1), Mb)
+    b_b, *_ = _ols(np.column_stack([Mb, Xb]), Yb)
+    boot_indirect.append(float(a_b[0]) * float(b_b[0]))
+boot_indirect = np.array(boot_indirect)
+ci_lo, ci_hi = np.percentile(boot_indirect, [2.5, 97.5])
+p_boot = min(np.mean(boot_indirect <= 0), np.mean(boot_indirect >= 0)) * 2
+print(f"  Bootstrap 95% CI for a*b: [{ci_lo:+.4f}, {ci_hi:+.4f}]"
+      f"  (zero excluded: {int(ci_lo > 0 or ci_hi < 0)})")
+print(f"  Bootstrap p (two-tailed): {p_boot:.4f} {sig(p_boot)}")
+
+# --- Plot 37: Path diagram ---
+fig, ax = plt.subplots(figsize=(10, 5))
+ax.set_xlim(0, 10); ax.set_ylim(0, 6); ax.axis('off')
+
+# Boxes
+for (x0, y0, w, h, lbl, clr) in [
+    (0.3, 2.2, 2.2, 1.4, 'AR Activity\nScore (X)', '#3498db'),
+    (3.9, 4.2, 2.2, 1.4, 'RBM15B z-score\n(Mediator M)', '#e67e22'),
+    (7.5, 2.2, 2.2, 1.4, 'm6A Functional\nImpact (Y)', '#e74c3c'),
+]:
+    rect = plt.Rectangle((x0, y0), w, h, linewidth=2, edgecolor=clr,
+                          facecolor=clr, alpha=0.18, zorder=2)
+    ax.add_patch(rect)
+    ax.text(x0 + w/2, y0 + h/2, lbl, ha='center', va='center',
+            fontsize=11, fontweight='bold', color=clr, zorder=3)
+
+# Arrows — scale positions
+arrow_kw = dict(arrowstyle='->', color='black', lw=2,
+                connectionstyle='arc3,rad=0')
+from matplotlib.patches import FancyArrowPatch
+# X → M (path a)
+ax.annotate('', xy=(3.9, 5.0), xytext=(2.5, 3.6),
+            arrowprops=dict(arrowstyle='->', color='#e67e22', lw=2.5,
+                            connectionstyle='arc3,rad=-0.2'))
+ax.text(2.9, 4.8, f'a={a:+.3f}{sig(a_p[0])}', fontsize=10,
+        color='#e67e22', fontweight='bold', ha='center')
+# M → Y (path b)
+ax.annotate('', xy=(7.5, 5.0), xytext=(6.1, 5.0),
+            arrowprops=dict(arrowstyle='->', color='#e67e22', lw=2.5))
+ax.text(6.8, 5.25, f'b={b:+.3f}{sig(b_p[0])}', fontsize=10,
+        color='#e67e22', fontweight='bold', ha='center')
+# X → Y (direct c')
+ax.annotate('', xy=(7.5, 2.9), xytext=(2.5, 2.9),
+            arrowprops=dict(arrowstyle='->', color='#3498db', lw=2.5))
+ax.text(5.0, 2.55, f"c'={cp_val:+.3f}{sig(cp_p[0])}", fontsize=10,
+        color='#3498db', fontweight='bold', ha='center')
+# Indirect label
+ci_str = f'[{ci_lo:+.3f}, {ci_hi:+.3f}]'
+zero_out = 'zero excluded' if (ci_lo > 0 or ci_hi < 0) else 'zero NOT excluded'
+ax.text(5.0, 1.5,
+        f'Indirect effect a×b = {indirect:+.4f}\n'
+        f'Bootstrap 95% CI: {ci_str}\n'
+        f'{zero_out}  (p={p_boot:.4f} {sig(p_boot)})',
+        ha='center', va='center', fontsize=11, fontweight='bold',
+        bbox=dict(facecolor='lightyellow', edgecolor='goldenrod', alpha=0.9, pad=6))
+ax.set_title('Mediation Analysis: ARS → RBM15B → m6A Functional Impact\n'
+             '(Adenocarcinoma only, standardised coefficients)',
+             fontsize=13, fontweight='bold', pad=12)
+plt.tight_layout()
+plt.savefig(os.path.join(OUTDIR, '37_mediation_ARS_RBM15B_FI.png'), dpi=300, bbox_inches='tight')
+print("  → Saved: 37_mediation_ARS_RBM15B_FI.png")
+plt.close()
+
+# --- Plot 38: Bootstrap distribution of indirect effect ----------------------
+fig, ax = plt.subplots(figsize=(8, 5))
+ax.hist(boot_indirect, bins=80, color='#e67e22', edgecolor='none', alpha=0.7)
+ax.axvline(0,         color='black', lw=1.5, ls='--', label='Zero')
+ax.axvline(indirect,  color='#c0392b', lw=2.5, label=f'Observed a×b={indirect:+.4f}')
+ax.axvline(ci_lo,     color='grey',   lw=1.5, ls=':', label=f'95% CI [{ci_lo:+.3f}, {ci_hi:+.3f}]')
+ax.axvline(ci_hi,     color='grey',   lw=1.5, ls=':')
+ax.fill_betweenx([0, ax.get_ylim()[1] if ax.get_ylim()[1] > 0 else 1],
+                  ci_lo, ci_hi, color='grey', alpha=0.12)
+ax.set_xlabel('Indirect effect (a×b)', fontsize=12, fontweight='bold')
+ax.set_ylabel('Bootstrap frequency', fontsize=12, fontweight='bold')
+ax.set_title(f'Bootstrap Distribution of Mediation Indirect Effect\n'
+             f'ARS → RBM15B → m6A FI  (n_boot={N_BOOT}, n={n_med} Adeno samples)',
+             fontsize=12, fontweight='bold', pad=12)
+ax.legend(fontsize=10)
+plt.tight_layout()
+plt.savefig(os.path.join(OUTDIR, '38_mediation_bootstrap_dist.png'), dpi=300, bbox_inches='tight')
+print("  → Saved: 38_mediation_bootstrap_dist.png")
+plt.close()
+
+print(f"\n  Part X summary:")
+print(f"  Indirect effect a×b = {indirect:+.4f}, 95% CI [{ci_lo:+.4f}, {ci_hi:+.4f}]")
+prop_med = abs(indirect/c)*100 if abs(c) > 1e-9 else float('nan')
+print(f"  Proportion of total effect mediated: {prop_med:.1f}%")
+
+
 print("\n\n" + "=" * 80)
 print("  ALL PLOTS SAVED")
 print("=" * 80)
@@ -1510,6 +1940,12 @@ for i, f in enumerate([
     '30_cross_cohort_ARS_trajectory.png',
     '31_cross_cohort_ARS_vs_FI.png',
     '32_AR_target_gene_percentile_heatmap.png',
+    '33_per_gene_AR_corr_deconfounded.png',
+    '34_ARS_vs_axes_adeno_only.png',
+    '35_partial_spearman_ARS_axes.png',
+    '36_RBM15B_ARS_by_lineage.png',
+    '37_mediation_ARS_RBM15B_FI.png',
+    '38_mediation_bootstrap_dist.png',
 ], 1):
     print(f"  {i:2d}. {f}")
 print(f"\n  Output directory: {OUTDIR}")
