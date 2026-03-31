@@ -38,7 +38,8 @@ TCGA_NORMAL_LOG2CPM = os.path.join(TCGA_NORMAL_DIR, 'expression_log2cpm.tsv')
 OUTDIR_CROSS_COHORT = os.path.join(_HERE, 'plots_cross_cohort')
 OUTDIR_MCRPC        = os.path.join(_HERE, 'plots_mcrpc')
 OUTDIR_PRESENTATION = os.path.join(_HERE, 'plots_presentation')
-OUTDIR_AR_M6A       = os.path.join(_HERE, 'plots_ar_m6a')
+OUTDIR_AR_M6A         = os.path.join(_HERE, 'plots_ar_m6a')
+OUTDIR_AR_CROSSCOHORT = os.path.join(_HERE, 'plots_ar_crosscohort')
 
 # ── Cross-cohort group definitions (6 cohorts, in progression order) ─────────
 GROUP_LABELS = [

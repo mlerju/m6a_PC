@@ -55,7 +55,7 @@ M6A_GENES <- c(
 META_COLS_WANTED <- c(
   # Required for survival analysis:
   "os_months",       # overall survival time in months
-  "os_event",        # 1 = died, 0 = censored
+  "os_event",        # 1 = died, 0 = alive
   "pfs_months",      # progression-free survival (if available)
   "pfs_event",
   # Grouping variables:

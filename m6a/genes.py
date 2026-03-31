@@ -80,3 +80,21 @@ MCRPC_MANUAL_WEIGHTS = {
     'METTL3': 3.0, 'METTL14': 2.0, 'WTAP': 1.5, 'ZC3H13': 1.0,
     'RBM15': 1.0, 'RBM15B': 0.8, 'CBLL1': 0.5,
 }
+
+# ── Androgen Receptor (AR) Activity Signature ────────────────────────────────
+# Canonical AR transcriptional target genes, well-validated in prostate cancer.
+# Used to compute a continuous AR Activity Score (ARS = mean z-score).
+# AR itself is excluded to avoid circularity; it is analysed separately.
+# Sources: Alumkal et al. 2020 (WCDT), Chen et al. 2018, Hallmark_Androgen_Response
+AR_TARGET_GENES = [
+    'KLK3',    # PSA — most canonical AR target
+    'KLK2',    # hK2 — AR target, high precision
+    'FKBP5',   # direct AR target, steroid hormone chaperone
+    'NKX3-1',  # AR-regulated homeobox, luminal marker
+    'TMPRSS2', # AR target; TMPRSS2-ERG fusion driver
+    'FOLH1',   # PSMA — AR-regulated, theranostic target
+    'STEAP2',  # AR target, cell surface
+    'HOXB13',  # AR co-regulator / target, luminal marker
+    'SLC45A3', # AR target, solute carrier
+    'ALDH1A3', # AR-regulated, lipid metabolism
+]
