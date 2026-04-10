@@ -40,6 +40,7 @@ OUTDIR_MCRPC        = os.path.join(_HERE, 'plots_mcrpc')
 OUTDIR_PRESENTATION = os.path.join(_HERE, 'plots_presentation')
 OUTDIR_AR_M6A         = os.path.join(_HERE, 'plots_ar_m6a')
 OUTDIR_AR_CROSSCOHORT = os.path.join(_HERE, 'plots_ar_crosscohort')
+OUTDIR_AR_SUMMARY     = os.path.join(_HERE, 'plots_ar_m6a_summary')
 
 # ── Cross-cohort group definitions (6 cohorts, in progression order) ─────────
 GROUP_LABELS = [
