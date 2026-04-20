@@ -20,6 +20,7 @@ TCGA_DIR        = '/mnt/biodata/data/processed/tcga_prad'
 GTEX_FILE       = '/mnt/biodata/data/raw/normalprost_GTEx/gene_tpm_v11_prostate.gct.gz'
 TCGA_NORMAL_DIR = '/mnt/biodata/data/processed/tcga_prad_normal'
 MHSPC_FILE      = '/mnt/biodata/data/processed/mhspc_gse221601/expression_log2tpm.tsv'
+DARANA_FILE     = '/mnt/biodata/data/processed/darana_gse197780/GSE197780_DARANA_GE_table.txt.gz'
 
 # mHSPC microarray (Davicioni collaboration) — populate when files arrive:
 MHSPC_ARRAY_EXPR = '/mnt/biodata/data/processed/mhspc_array/mhspc_expression_full.tsv.gz'

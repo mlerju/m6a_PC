@@ -85,16 +85,28 @@ MCRPC_MANUAL_WEIGHTS = {
 # Canonical AR transcriptional target genes, well-validated in prostate cancer.
 # Used to compute a continuous AR Activity Score (ARS = mean z-score).
 # AR itself is excluded to avoid circularity; it is analysed separately.
-# Sources: Alumkal et al. 2020 (WCDT), Chen et al. 2018, Hallmark_Androgen_Response
+# Sources:
+#   Tier 1 core (confirmed ARE binding):
+#     Hieronymus et al. 2006 Cancer Cell 10:141 (PMID 17010675) — PMEPA1, EAF2/U19
+#     Prescott et al. 1998 Genes Dev (NKX3-1); Lin et al. 1999 Cancer Res (TMPRSS2)
+#     Febbo et al. 2005 JNCI (FKBP5); Riegman et al. 1989/1991 (KLK2/KLK3)
+#   Tier 2 (mCRPC-validated targets):
+#     Kawakami et al. 2006 Clin Cancer Res (FOLH1/PSMA)
+#     Korkmaz et al. 2009 Clin Cancer Res (STEAP2)
+#     Maher et al. 2009 Science 326:1258 (SLC45A3)
+# HOXB13 removed: pioneer factor upstream of AR, not a downstream output
+#   (Sahu et al. 2011 Cell 147:1368; Huang et al. 2014 Cell 155:1135)
+# ALDH1A3 removed: NEPC/stem-cell marker inversely related to AR activity
+#   (Bhatt et al. 2017 JCI Insight; Smith et al. 2022 Nat Commun)
 AR_TARGET_GENES = [
-    'KLK3',    # PSA — most canonical AR target
-    'KLK2',    # hK2 — AR target, high precision
-    'FKBP5',   # direct AR target, steroid hormone chaperone
-    'NKX3-1',  # AR-regulated homeobox, luminal marker
-    'TMPRSS2', # AR target; TMPRSS2-ERG fusion driver
-    'FOLH1',   # PSMA — AR-regulated, theranostic target
-    'STEAP2',  # AR target, cell surface
-    'HOXB13',  # AR co-regulator / target, luminal marker
-    'SLC45A3', # AR target, solute carrier
-    'ALDH1A3', # AR-regulated, lipid metabolism
+    'KLK3',    # PSA — most canonical AR target (Riegman 1991)
+    'KLK2',    # hK2 — AR target, high precision (Riegman 1989)
+    'FKBP5',   # direct AR target, steroid chaperone (Febbo 2005 JNCI)
+    'NKX3-1',  # AR-regulated homeobox, luminal marker (Prescott 1998 Genes Dev)
+    'TMPRSS2', # direct AR target; TMPRSS2-ERG fusion driver (Lin 1999 Cancer Res)
+    'PMEPA1',  # direct ARE-driven target (Zhao 2003 J Biol Chem); Hieronymus 2006 core
+    'EAF2',    # direct AR transcriptional target (Cao 2006 Cancer Res); Hieronymus 2006 core
+    'FOLH1',   # PSMA — AR-regulated, theranostic target (Kawakami 2006 CCR)
+    'STEAP2',  # androgen-regulated cell surface protein (Korkmaz 2009 CCR)
+    'SLC45A3', # AR target, solute carrier (Maher 2009 Science)
 ]

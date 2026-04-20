@@ -32,6 +32,7 @@ from m6a.config import (
     GTEX_FILE,
     TCGA_NORMAL_LOG2CPM,
     MHSPC_FILE,
+    DARANA_FILE,
 )
 from m6a.genes import IGF2BP_ENSEMBL
 
@@ -193,6 +194,55 @@ def load_mhspc_microarray(expr_file, meta_file=None):
         meta.index.name = 'sample_id'
         print(f"    mHSPC metadata:   {meta.shape[0]} samples × {meta.shape[1]} columns")
 
+    return expr, meta
+
+
+def load_darana():
+    """
+    Load DARANA (GSE197780) — neoadjuvant enzalutamide trial.
+
+    Primary prostate cancer biopsied before and after ~3 months of enzalutamide
+    monotherapy (Linder et al., Cancer Discov 2022; PMID 35754340).
+
+    The GEO supplementary table has a single-row title (skipped), then a header
+    row with ensembl_gene_id / gene_id / DAR01_pre / DAR01_post / ...
+
+    Returns
+    -------
+    expr_df : DataFrame (samples × genes), log2-normalised counts.
+              Index values follow the pattern "DAR{nn}_{pre|post}".
+    meta_df : DataFrame with columns:
+              'patient'   — e.g. 'DAR01'
+              'timepoint' — 'pre' or 'post'
+              'paired'    — True if this patient has both pre and post samples
+    """
+    df = pd.read_csv(DARANA_FILE, sep='\t', skiprows=1, low_memory=False)
+    # Set gene symbol as index; drop ensembl column
+    df = df.set_index('gene_id').drop(columns=['ensembl_gene_id'], errors='ignore')
+    # Keep only DAR* sample columns; convert to float
+    sample_cols = [c for c in df.columns if c.startswith('DAR')]
+    df = df[sample_cols].apply(pd.to_numeric, errors='coerce').fillna(0.0)
+    # Transpose → samples × genes
+    expr = df.T.copy()
+    expr.index.name = 'sample_id'
+
+    # Meta
+    patients   = [s.rsplit('_', 1)[0] for s in expr.index]
+    timepoints = [s.rsplit('_', 1)[1] for s in expr.index]
+    pre_ids    = {p for p, t in zip(patients, timepoints) if t == 'pre'}
+    post_ids   = {p for p, t in zip(patients, timepoints) if t == 'post'}
+    paired_ids = pre_ids & post_ids
+    meta = pd.DataFrame({
+        'patient':   patients,
+        'timepoint': timepoints,
+        'paired':    [p in paired_ids for p in patients],
+    }, index=expr.index)
+
+    n_pre  = (meta['timepoint'] == 'pre').sum()
+    n_post = (meta['timepoint'] == 'post').sum()
+    n_pair = len(paired_ids)
+    print(f"    DARANA (GSE197780): {len(expr)} samples "
+          f"({n_pre} pre / {n_post} post, {n_pair} paired) × {expr.shape[1]} genes")
     return expr, meta
 
 

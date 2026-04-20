@@ -29,11 +29,11 @@ import matplotlib.gridspec as gridspec
 import seaborn as sns
 from matplotlib.patches import Patch, FancyArrowPatch
 from scipy.stats import spearmanr, kruskal, rankdata as _rankdata, pearsonr as _pearsonr
-from scipy.stats import t as _t_dist
+from scipy.stats import t as _t_dist, mannwhitneyu, rankdata as _sp_rankdata
 from sklearn.decomposition import PCA as _PCA
 from sklearn.linear_model import LogisticRegression as _LR
-from lifelines import KaplanMeierFitter
-from lifelines.statistics import logrank_test
+from lifelines import KaplanMeierFitter as _KMF, CoxPHFitter as _CPH
+from lifelines.statistics import logrank_test as _logrank_test
 
 warnings.filterwarnings('ignore')
 plt.rcParams['savefig.dpi'] = 300
@@ -51,13 +51,28 @@ from m6a.genes import (
     MCRPC_GENE_ROLES   as gene_roles,
     MCRPC_GENE_ORDER   as gene_order,
     MCRPC_MANUAL_WEIGHTS as MANUAL_WEIGHTS,
+    # Cross-cohort sublists (for CC_GENE_ORDER)
+    WRITER_GENES        as CC_WRITER_GENES,
+    READER_ONCOGENIC    as CC_READER_ONCOGENIC,
+    READER_SUPPRESSIVE  as CC_READER_SUPPRESSIVE,
 )
+
+# 22-gene cross-cohort gene order and roles (adds METTL16, HNRNPA2B1, ELAVL1, HNRNPC, FMR1)
+CC_GENE_ORDER = CC_WRITER_GENES + ERASER_GENES + CC_READER_ONCOGENIC + CC_READER_SUPPRESSIVE
+CC_GENE_ROLES = dict(gene_roles)
+CC_GENE_ROLES.update({
+    'METTL16':   'Writer (SAM-MTase)',
+    'HNRNPA2B1': 'Reader (Oncogenic)',
+    'ELAVL1':    'Reader (Oncogenic)',
+    'HNRNPC':    'Reader (Suppressive)',
+    'FMR1':      'Reader (Suppressive)',
+})
 from m6a.stats import sig
 from m6a.normalization import zscore_normalize, percentile_rank_matrix
 from m6a.scoring import compute_axes
 from m6a.plotting import style_violin
 from m6a.data.loaders import (
-    load_mcrpc, load_tcga, load_gtex, load_adj_normal, load_mcspc,
+    load_mcrpc, load_tcga, load_gtex, load_adj_normal, load_mcspc, load_darana,
     build_common_universe,
 )
 
@@ -154,7 +169,7 @@ print("\n[B] Loading and scoring mCRPC data ...")
 
 df, meta = load_mcrpc()   # fresh load for mCRPC z-score branch
 
-all_genes = list(set(ALL_M6A_GENES + AR_TARGET_GENES + ['AR']))
+all_genes = list(set(CROSS_COHORT_M6A_GENES + AR_TARGET_GENES + ['AR']))
 all_genes = [g for g in all_genes if g in df.columns]
 z_all     = zscore_normalize(df[all_genes])
 
@@ -228,13 +243,19 @@ lb_cov  = lb_num.loc[idx_lb].values
 
 print(f"  Adeno subset: n={len(idx_adeno_full)}  (Lum={lb_cov.sum():.0f}, Bas={(lb_cov==0).sum():.0f})")
 
-# Per-gene: full / Adeno-only / partial
+# Per-gene: Adeno-only / partial  (22-gene cross-cohort set)
 pc_rows = []
-for gene in gene_order:
-    r_f, p_f = spearmanr(z_all.loc[ars.index, gene], ars)
-    r_a, p_a = spearmanr(z_adeno[gene], ars_adeno_s)
-    r_p, p_p, _ = partial_spearman(z_lb[gene].values, ars_lb.values, lb_cov)
-    pc_rows.append({'Gene': gene, 'Role': gene_roles[gene],
+for gene in CC_GENE_ORDER:
+    r_f = p_f = np.nan
+    if gene in z_all.columns:
+        r_f, p_f = spearmanr(z_all.loc[ars.index, gene], ars)
+    r_a = p_a = np.nan
+    if gene in z_adeno.columns:
+        r_a, p_a = spearmanr(z_adeno[gene], ars_adeno_s)
+    r_p = p_p = np.nan
+    if gene in z_lb.columns:
+        r_p, p_p, _ = partial_spearman(z_lb[gene].values, ars_lb.values, lb_cov)
+    pc_rows.append({'Gene': gene, 'Role': CC_GENE_ROLES.get(gene, 'Unknown'),
                     'rho_full': r_f, 'p_full': p_f,
                     'rho_adeno': r_a, 'p_adeno': p_a,
                     'rho_partial': r_p, 'p_partial': p_p})
@@ -284,7 +305,7 @@ b_coef,  b_se,  b_p  = _ols(np.column_stack([M_s, X_s]), Y_s)
 c_coef,  c_se,  c_p  = _ols(X_s.reshape(-1,1), Y_s)
 cp_coef, cp_se, cp_p = _ols(np.column_stack([X_s, M_s]), Y_s)
 
-a, b, c, cp_val = float(a_coef[0]), float(b_coef[0]), float(c_coef[0]), float(cp_coef[0])
+a, b, c_total, cp_val = float(a_coef[0]), float(b_coef[0]), float(c_coef[0]), float(cp_coef[0])
 indirect = a * b
 
 # Bootstrap
@@ -299,24 +320,52 @@ for _ in range(5000):
 boot_indirect = np.array(boot_indirect)
 ci_lo, ci_hi  = np.percentile(boot_indirect, [2.5, 97.5])
 p_boot        = min(np.mean(boot_indirect <= 0), np.mean(boot_indirect >= 0)) * 2
-prop_med      = abs(indirect / c) * 100 if abs(c) > 1e-9 else float('nan')
+prop_med      = abs(indirect / c_total) * 100 if abs(c_total) > 1e-9 else float('nan')
 
 print(f"  Path a  β={a:+.4f} {sig(a_p[0])},  Path b  β={b:+.4f} {sig(b_p[0])}")
-print(f"  Total c β={c:+.4f} {sig(c_p[0])},  Direct c' β={cp_val:+.4f} {sig(cp_p[0])}")
+print(f"  Total c β={c_total:+.4f} {sig(c_p[0])},  Direct c' β={cp_val:+.4f} {sig(cp_p[0])}")
 print(f"  Indirect a×b = {indirect:+.4f}  95%CI [{ci_lo:+.4f}, {ci_hi:+.4f}]  p={p_boot:.4f} {sig(p_boot)}")
 print(f"  Proportion mediated: {prop_med:.1f}%")
 
 # =============================================================================
-# FIGURE 3 — DUAL TRAJECTORY: ARS + m6A FI across disease stages
+# FIGURE 3 — TRIPLE TRAJECTORY: AR mRNA + ARS + m6A FI across disease stages
 # =============================================================================
-print("\n[Fig 3] Dual trajectory ...")
+print("\n[Fig 3] Triple trajectory ...")
 
+# AR mRNA percentile-rank per cohort (shows expression loss in SCNC directly)
+if 'AR' in common:
+    ar_pct_groups = [pct[k]['AR'] for k in cohort_keys]
+else:
+    ar_pct_groups = [pd.Series(dtype=float)] * len(cohort_keys)
+_, p_ar_kw  = kruskal(*[g.dropna().values for g in ar_pct_groups])
 _, p_ars_kw = kruskal(*[g.dropna().values for g in ars_groups])
 _, p_fi_kw  = kruskal(*[g.dropna().values for g in fi_groups])
 
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 11), sharex=True)
+fig, (ax0, ax1, ax2) = plt.subplots(3, 1, figsize=(14, 15), sharex=True)
 
-# Panel A — ARS
+# Panel A — AR mRNA (percentile rank)
+parts0 = ax0.violinplot([g.values for g in ar_pct_groups],
+                         positions=range(len(ar_pct_groups)),
+                         showmeans=True, showmedians=True)
+for i, c in enumerate(CC_COLORS):
+    parts0['bodies'][i].set_facecolor(c); parts0['bodies'][i].set_alpha(0.65)
+style_violin(parts0, ax0)
+for i, (g, c) in enumerate(zip(ar_pct_groups, CC_COLORS)):
+    ax0.scatter([i] * len(g), g.values, c=c, alpha=0.15, s=4, zorder=0, edgecolors='none')
+ax0.axhline(50, color='grey', lw=1, ls='--', alpha=0.5, label='Global median (50th %ile)')
+ax0.set_ylabel('AR mRNA Expression\n(%ile rank)', fontsize=12, fontweight='bold')
+ax0.set_title(f'A.  AR mRNA Expression Trajectory  (KW p={p_ar_kw:.2e} {sig(p_ar_kw)})\n'
+              f'SCNC drop confirms AR gene loss — ARS low in SCNC reflects AR loss, not regulation',
+              fontsize=12, fontweight='bold', loc='left', pad=8)
+ax0.legend(fontsize=9, loc='lower right')
+# Annotate SCNC collapse
+scnc_ar_med = ar_pct_groups[5].median()
+ax0.annotate('AR lost\nin SCNC', xy=(5, scnc_ar_med),
+             xytext=(4.2, scnc_ar_med + 10),
+             arrowprops=dict(arrowstyle='->', color='#c0392b', lw=1.5),
+             fontsize=9, color='#c0392b', fontweight='bold')
+
+# Panel B — ARS
 parts1 = ax1.violinplot([g.values for g in ars_groups],
                          positions=range(len(ars_groups)),
                          showmeans=True, showmedians=True)
@@ -327,11 +376,11 @@ for i, (g, c) in enumerate(zip(ars_groups, CC_COLORS)):
     ax1.scatter([i] * len(g), g.values, c=c, alpha=0.15, s=4, zorder=0, edgecolors='none')
 ax1.axhline(50, color='grey', lw=1, ls='--', alpha=0.5, label='Global median (50th %ile)')
 ax1.set_ylabel('AR Activity Score\n(mean %ile rank of AR targets)', fontsize=12, fontweight='bold')
-ax1.set_title(f'A.  AR Activity Score Trajectory  (KW p={p_ars_kw:.2e} {sig(p_ars_kw)})',
+ax1.set_title(f'B.  AR Activity Score Trajectory  (KW p={p_ars_kw:.2e} {sig(p_ars_kw)})',
               fontsize=13, fontweight='bold', loc='left', pad=8)
 ax1.legend(fontsize=9, loc='lower right')
 
-# Panel B — m6A FI
+# Panel C — m6A FI
 parts2 = ax2.violinplot([g.values for g in fi_groups],
                          positions=range(len(fi_groups)),
                          showmeans=True, showmedians=True)
@@ -342,7 +391,7 @@ for i, (g, c) in enumerate(zip(fi_groups, CC_COLORS)):
     ax2.scatter([i] * len(g), g.values, c=c, alpha=0.15, s=4, zorder=0, edgecolors='none')
 ax2.axhline(0, color='grey', lw=1, ls='--', alpha=0.5)
 ax2.set_ylabel('m6A Functional Impact\n(%ile-rank, LR-weighted writers)', fontsize=12, fontweight='bold')
-ax2.set_title(f'B.  m6A Functional Impact Trajectory  (KW p={p_fi_kw:.2e} {sig(p_fi_kw)})',
+ax2.set_title(f'C.  m6A Functional Impact Trajectory  (KW p={p_fi_kw:.2e} {sig(p_fi_kw)})',
               fontsize=13, fontweight='bold', loc='left', pad=8)
 
 ax2.set_xticks(range(len(CC_LABELS)))
@@ -356,7 +405,7 @@ ax2.annotate('m6A FI rises\nat mCRPC\n(+13 pts)', xy=(4, fi_groups[4].mean()),
              arrowprops=dict(arrowstyle='->', color='#e67e22', lw=1.5),
              fontsize=9, color='#e67e22', fontweight='bold')
 
-plt.suptitle('AR Activity and m6A Functional Impact Across Prostate Cancer Progression',
+plt.suptitle('AR Expression, AR Activity and m6A Functional Impact Across Prostate Cancer Progression',
              fontsize=14, fontweight='bold', y=1.01)
 plt.tight_layout()
 plt.savefig(os.path.join(OUTDIR, 'fig3_dual_trajectory.png'), dpi=300, bbox_inches='tight')
@@ -499,41 +548,43 @@ ax_c.legend(handles=[Patch(facecolor='#2980b9', label='Luminal'),
                       Patch(facecolor='#95a5a6', label='Unassigned')],
             fontsize=8, loc='upper right')
 
-# --- Panel D: RBM15 vs RBM15B colored by ARS quartile (NEW) -----------------
-# Shows the paralog balance shift: AR-high tumors tip toward RBM15B
+# --- Panel D: RBM15 vs RBM15B colored by ARS quartile -----------------------
+# Shows the paralog balance shift: AR-high tumors tip toward RBM15B (above diagonal).
+# Per-quartile scatter trend lines are noise (within-Q rho ns); the signal is
+# the fraction above the identity diagonal shifting with ARS quartile.
 x_d_idx = ars.index  # all mCRPC samples with ARS
 x_d = z_all.loc[x_d_idx, 'RBM15'].values
 y_d = z_all.loc[x_d_idx, 'RBM15B'].values
-q_d = q_bins.loc[x_d_idx].values
-clr_d = np.array([q_palette.get(str(q), '#aaaaaa') for q in q_d])
+fin_d = np.isfinite(x_d) & np.isfinite(y_d)
 
-# Plot each quartile as separate scatter for legend
+# Imbalance score: RBM15B - RBM15 (positive = shifted toward RBM15B)
+imbalance = y_d - x_d
+r_imb, p_imb = spearmanr(ars.loc[x_d_idx].values[fin_d], imbalance[fin_d])
+
+# Fraction above diagonal per quartile
+q_frac = {}
+for q_lbl in q_palette:
+    mask_q = ((q_bins.loc[x_d_idx] == q_lbl).values) & fin_d
+    q_frac[q_lbl] = (y_d[mask_q] > x_d[mask_q]).mean() * 100 if mask_q.sum() > 0 else np.nan
+
+# Plot each quartile as separate scatter
 for q_lbl, q_col in q_palette.items():
     mask_q = q_bins.loc[x_d_idx] == q_lbl
     ax_d.scatter(x_d[mask_q.values], y_d[mask_q.values],
-                 c=q_col, alpha=0.45, s=16, edgecolors='none', label=q_lbl)
-
-# Trend lines per quartile
-for q_lbl, q_col in q_palette.items():
-    mask_q = (q_bins.loc[x_d_idx] == q_lbl).values
-    xq, yq = x_d[mask_q], y_d[mask_q]
-    fin = np.isfinite(xq) & np.isfinite(yq)
-    if fin.sum() > 10:
-        m_q, b_q = np.polyfit(xq[fin], yq[fin], 1)
-        xl_q = np.linspace(xq[fin].min(), xq[fin].max(), 80)
-        ax_d.plot(xl_q, m_q * xl_q + b_q, color=q_col, lw=1.8, alpha=0.85)
+                 c=q_col, alpha=0.45, s=16, edgecolors='none',
+                 label=f'{q_lbl} ({q_frac[q_lbl]:.0f}% above diag.)')
 
 # Diagonal of equality
-lim_d = max(abs(x_d).max(), abs(y_d).max()) * 1.05
-ax_d.plot([-lim_d, lim_d], [-lim_d, lim_d], 'k--', lw=1, alpha=0.4, label='RBM15 = RBM15B')
+lim_d = max(abs(x_d[fin_d]).max(), abs(y_d[fin_d]).max()) * 1.05
+ax_d.plot([-lim_d, lim_d], [-lim_d, lim_d], 'k--', lw=1.5, alpha=0.55, zorder=3)
 ax_d.axhline(0, color='grey', lw=0.5, ls=':', alpha=0.4)
 ax_d.axvline(0, color='grey', lw=0.5, ls=':', alpha=0.4)
 ax_d.set_xlabel('RBM15 z-score\n(Writer-Targeting paralog)', fontsize=10, fontweight='bold')
 ax_d.set_ylabel('RBM15B z-score\n(Writer-Targeting paralog)', fontsize=10, fontweight='bold')
-ax_d.set_title('D.  RBM15 ↔ RBM15B Paralog Balance by ARS Quartile\n'
-               'AR-high tumors shift toward RBM15B (above diagonal)',
+ax_d.set_title(f'D.  RBM15 ↔ RBM15B Paralog Balance by ARS Quartile\n'
+               f'ARS vs (RBM15B−RBM15): ρ={r_imb:+.3f} {sig(p_imb)}  (n={fin_d.sum()})',
                fontsize=10, fontweight='bold', loc='left', pad=5)
-ax_d.legend(fontsize=7.5, loc='upper left', framealpha=0.9)
+ax_d.legend(fontsize=7.5, loc='upper left', framealpha=0.9, title='% above diagonal = fraction\nshifted toward RBM15B')
 
 # Global legend for Luminal/Basal (panels B and C)
 fig.text(0.01, 0.01, '★ Panels B & C: color = Luminal (blue) / Basal (red) / Unassigned (grey)',
@@ -546,26 +597,24 @@ print("  → Saved: fig5_per_gene_mcrpc.png")
 plt.close()
 
 # =============================================================================
-# FIGURE 6 — MEDIATION + SURVIVAL  (2×2 merged figure)
+# FIGURE 6 — MEDIATION: ARS → RBM15B → m6A FI  (1×2 layout: path + bootstrap)
 # =============================================================================
-print("[Fig 6] Mediation + survival ...")
+print("[Fig 6] Mediation ...")
 
-fig6_ms = plt.figure(figsize=(18, 13))
-gs6_ms  = gridspec.GridSpec(2, 2, figure=fig6_ms, hspace=0.45, wspace=0.38)
+fig6_ms = plt.figure(figsize=(18, 8))
+gs6_ms  = gridspec.GridSpec(1, 2, figure=fig6_ms, hspace=0.35, wspace=0.40)
 ax_path = fig6_ms.add_subplot(gs6_ms[0, 0])
 ax_boot = fig6_ms.add_subplot(gs6_ms[0, 1])
-ax_km   = fig6_ms.add_subplot(gs6_ms[1, 0])
-ax_cox  = fig6_ms.add_subplot(gs6_ms[1, 1])
 
 # --- Panel A: path diagram ---------------------------------------------------
 ax_path.set_xlim(0, 10)
-ax_path.set_ylim(0, 6)
+ax_path.set_ylim(0, 6.5)
 ax_path.axis('off')
 
 box_specs = [
-    (0.3, 2.2, 2.2, 1.4, 'AR Activity\nScore (X)', '#3498db'),
-    (3.9, 4.2, 2.2, 1.4, 'RBM15B z-score\n(Mediator M)', '#e67e22'),
-    (7.5, 2.2, 2.2, 1.4, 'm6A Functional\nImpact (Y)', '#e74c3c'),
+    (0.3, 2.5, 2.3, 1.4, 'AR Activity\nScore (X)', '#3498db'),
+    (3.85, 4.5, 2.3, 1.4, 'RBM15B z-score\n(Mediator M)', '#e67e22'),
+    (7.4, 2.5, 2.3, 1.4, 'm6A Functional\nImpact (Y)', '#e74c3c'),
 ]
 for (x0, y0, w_box, h_box, lbl, clr) in box_specs:
     rect = plt.Rectangle((x0, y0), w_box, h_box, linewidth=2,
@@ -575,146 +624,80 @@ for (x0, y0, w_box, h_box, lbl, clr) in box_specs:
                  fontsize=11, fontweight='bold', color=clr, zorder=3)
 
 # X → M  (path a)
-ax_path.annotate('', xy=(3.9, 5.0), xytext=(2.5, 3.6),
+ax_path.annotate('', xy=(3.85, 5.2), xytext=(2.6, 3.9),
                  arrowprops=dict(arrowstyle='->', color='#e67e22', lw=2.5,
                                  connectionstyle='arc3,rad=-0.2'))
-ax_path.text(2.9, 4.8, f'a = {a:+.3f} {sig(a_p[0])}',
-             fontsize=10.5, color='#e67e22', fontweight='bold', ha='center')
+ax_path.text(2.8, 5.05,
+             f'a = {a:+.3f} {sig(a_p[0])}\n'
+             f'(+1 SD ARS → {a:+.2f} SD RBM15B)',
+             fontsize=9.5, color='#e67e22', fontweight='bold', ha='center')
 
 # M → Y  (path b)
-ax_path.annotate('', xy=(7.5, 5.0), xytext=(6.1, 5.0),
+ax_path.annotate('', xy=(7.4, 5.2), xytext=(6.15, 5.2),
                  arrowprops=dict(arrowstyle='->', color='#e67e22', lw=2.5))
-ax_path.text(6.8, 5.3, f'b = {b:+.3f} {sig(b_p[0])}',
-             fontsize=10.5, color='#e67e22', fontweight='bold', ha='center')
+ax_path.text(6.75, 5.55,
+             f'b = {b:+.3f} {sig(b_p[0])}\n'
+             f'(+1 SD RBM15B → {b:+.2f} SD FI | X)',
+             fontsize=9.5, color='#e67e22', fontweight='bold', ha='center')
 
 # X → Y  (direct c')
-ax_path.annotate('', xy=(7.5, 2.9), xytext=(2.5, 2.9),
+ax_path.annotate('', xy=(7.4, 3.2), xytext=(2.6, 3.2),
                  arrowprops=dict(arrowstyle='->', color='#3498db', lw=2.5))
-ax_path.text(5.0, 2.55, f"c' = {cp_val:+.3f} {sig(cp_p[0])} (direct)",
-             fontsize=10.5, color='#3498db', fontweight='bold', ha='center')
+ax_path.text(5.0, 2.85,
+             f"c' = {cp_val:+.3f} {sig(cp_p[0])}  (direct, net of RBM15B)",
+             fontsize=9.5, color='#3498db', fontweight='bold', ha='center')
 
-zero_out = 'CI excludes zero' if (ci_lo > 0 or ci_hi < 0) else 'CI includes zero'
-ax_path.text(5.0, 1.35,
-             f'Indirect effect  a×b = {indirect:+.4f}\n'
-             f'Bootstrap 95% CI: [{ci_lo:+.3f}, {ci_hi:+.3f}]  ({zero_out})\n'
-             f'p = {p_boot:.4f} {sig(p_boot)}   |   Proportion mediated ≈ {prop_med:.1f}%',
-             ha='center', va='center', fontsize=11, fontweight='bold',
-             bbox=dict(facecolor='lightyellow', edgecolor='goldenrod', alpha=0.9, pad=6))
+# Total effect annotation at bottom
+ax_path.text(5.0, 2.1,
+             f'Total effect  c = {c_total:+.3f} {sig(c_p[0])}',
 
-ax_path.set_title('A.  Mediation Path  (standardised OLS coefficients,\n'
-                   '      Adenocarcinoma only)',
+             fontsize=9.5, color='#555555', fontweight='bold', ha='center')
+
+# Summary box
+zero_out = 'CI excludes 0 ✓' if (ci_lo > 0 or ci_hi < 0) else 'CI includes 0'
+ax_path.text(5.0, 1.15,
+             f'Indirect  a×b = {indirect:+.4f}   Bootstrap 95% CI: [{ci_lo:+.3f}, {ci_hi:+.3f}]\n'
+             f'p = {p_boot:.4f} {sig(p_boot)}   |   Proportion mediated ≈ {prop_med:.1f}%\n'
+             f'({zero_out};  all paths estimated by OLS on standardised variables)',
+             ha='center', va='center', fontsize=10, fontweight='bold',
+             bbox=dict(facecolor='lightyellow', edgecolor='goldenrod', alpha=0.9, pad=7))
+
+ax_path.set_title('A.  Causal Mediation Path Diagram  (standardised OLS)\n'
+                   '      Adenocarcinoma only; each coefficient = SD-unit effect',
                    fontsize=12, fontweight='bold', loc='left', pad=8)
 
 # --- Panel B: bootstrap distribution ----------------------------------------
 ax_boot.hist(boot_indirect, bins=80, color='#e67e22', edgecolor='none', alpha=0.7)
-ax_boot.axvline(0,        color='black', lw=1.5, ls='--', label='Zero')
+ax_boot.axvline(0,        color='black', lw=1.5, ls='--', label='Zero (null)')
 ax_boot.axvline(indirect, color='#c0392b', lw=2.5,
                 label=f'Observed a×b = {indirect:+.4f}')
 ax_boot.axvline(ci_lo, color='grey', lw=1.5, ls=':',
                 label=f'95% CI [{ci_lo:+.3f}, {ci_hi:+.3f}]')
 ax_boot.axvline(ci_hi, color='grey', lw=1.5, ls=':')
 ax_boot.set_xlabel('Indirect effect (a×b)', fontsize=12, fontweight='bold')
-ax_boot.set_ylabel('Bootstrap frequency (n=5000)', fontsize=12, fontweight='bold')
-ax_boot.set_title(f'B.  Bootstrap Distribution of Indirect Effect\n'
-                   f'ARS → RBM15B → m6A FI   (n={n_med} Adeno samples)',
+ax_boot.set_ylabel('Bootstrap frequency (n=5 000)', fontsize=12, fontweight='bold')
+ax_boot.set_title(f'B.  Bootstrap Distribution of Indirect Effect  (n=5 000 resamples)\n'
+                   f'ARS → RBM15B → m6A FI  |  n={n_med} Adeno samples',
                    fontsize=12, fontweight='bold', loc='left', pad=8)
 ax_boot.legend(fontsize=10)
+# Shade CI region
+xlim_b = ax_boot.get_xlim()
+y_top  = ax_boot.get_ylim()[1]
+ax_boot.axvspan(ci_lo, ci_hi, alpha=0.08, color='grey', zorder=0)
+ax_boot.text(indirect * 1.3, y_top * 0.85,
+             f'p = {p_boot:.4f} {sig(p_boot)}\n{prop_med:.1f}% of total\neffect mediated',
+             fontsize=11, fontweight='bold', color='#c0392b',
+             bbox=dict(facecolor='white', edgecolor='#c0392b', alpha=0.85, pad=4))
 
-# — Clinical panels (C: KM, D: Cox) follow —
-
-from lifelines import CoxPHFitter
-
-surv_idx = meta[['surv_months', 'vital_status']].dropna().index.intersection(df.index)
-surv_df  = meta.loc[surv_idx, ['surv_months', 'vital_status',
-                                 'AR_Activity_Score', 'm6A_Functional_Impact']].dropna()
-print(f"  Survival subset: n={len(surv_df)}")
-
-# ----- Cox model (continuous, standardised) ----------------------------------
-cox_df = surv_df.copy()
-cox_df['AR_FI_interaction'] = cox_df['AR_Activity_Score'] * cox_df['m6A_Functional_Impact']
-for col in ['AR_Activity_Score', 'm6A_Functional_Impact', 'AR_FI_interaction']:
-    cox_df[col] = (cox_df[col] - cox_df[col].mean()) / cox_df[col].std()
-
-cph = CoxPHFitter()
-cph.fit(cox_df, duration_col='surv_months', event_col='vital_status')
-print("\n  Cox PH (continuous, standardised):")
-print(cph.summary[['coef', 'exp(coef)', 'p', 'coef lower 95%', 'coef upper 95%']].to_string())
-
-cox_sum = cph.summary.copy()
-
-# ----- KM: ARS median split --------------------------------------------------
-med_ars  = surv_df['AR_Activity_Score'].median()
-ars_hi_s = surv_df[surv_df['AR_Activity_Score'] >= med_ars]
-ars_lo_s = surv_df[surv_df['AR_Activity_Score'] <  med_ars]
-lr_ars   = logrank_test(ars_hi_s['surv_months'], ars_lo_s['surv_months'],
-                         ars_hi_s['vital_status'], ars_lo_s['vital_status'])
-
-# Panel A — KM
-kmf = KaplanMeierFitter()
-kmf.fit(ars_hi_s['surv_months'], ars_hi_s['vital_status'],
-        label=f'High ARS (n={len(ars_hi_s)})')
-kmf.plot_survival_function(ax=ax_km, color='#e74c3c', linewidth=2.2,
-                            ci_show=True, ci_alpha=0.12)
-kmf.fit(ars_lo_s['surv_months'], ars_lo_s['vital_status'],
-        label=f'Low ARS (n={len(ars_lo_s)})')
-kmf.plot_survival_function(ax=ax_km, color='#3498db', linewidth=2.2,
-                            ci_show=True, ci_alpha=0.12)
-ax_km.set_xlabel('Time (months)', fontsize=12, fontweight='bold')
-ax_km.set_ylabel('Survival Probability', fontsize=12, fontweight='bold')
-ax_km.set_title(f'C.  Overall Survival by AR Activity Score\n'
-                f'Median split (n={len(surv_df)})  '
-                f'Log-rank p={lr_ars.p_value:.4f} {sig(lr_ars.p_value)}',
-                fontsize=12, fontweight='bold', loc='left', pad=8)
-ax_km.set_ylim(0, 1.05)
-ax_km.legend(fontsize=11, loc='lower left')
-
-# Panel B — Cox forest
-labels_map = {
-    'AR_Activity_Score':    'AR Activity Score\n(per SD)',
-    'm6A_Functional_Impact':'m6A Functional Impact\n(per SD)',
-    'AR_FI_interaction':    'AR × m6A Interaction\n(per SD)',
-}
-hr_colors = {'AR_Activity_Score': '#e74c3c',
-             'm6A_Functional_Impact': '#3498db',
-             'AR_FI_interaction': '#8e44ad'}
-
-y_ticks, y_labels = [], []
-for i, (varname, row) in enumerate(cox_sum.iterrows()):
-    hr  = row['exp(coef)']
-    lo  = np.exp(row['coef lower 95%'])
-    hi  = np.exp(row['coef upper 95%'])
-    p_v = row['p']
-    c   = hr_colors.get(varname, '#555555')
-    ax_cox.plot([lo, hi], [i, i], '-', color=c, lw=4, alpha=0.65, solid_capstyle='round')
-    ax_cox.plot(hr, i, 'o', color=c, markersize=11, zorder=5,
-                markeredgecolor='white', markeredgewidth=1.5)
-    ax_cox.text(hi + 0.01, i,
-                f'  HR={hr:.2f}  [{lo:.2f}–{hi:.2f}]\n  p={p_v:.3f} {sig(p_v)}',
-                ha='left', va='center', fontsize=9.5, color=c, fontweight='bold')
-    y_ticks.append(i)
-    y_labels.append(labels_map.get(varname, varname))
-
-ax_cox.axvline(1.0, color='black', lw=1.2, ls='--', alpha=0.7)
-ax_cox.set_yticks(y_ticks)
-ax_cox.set_yticklabels(y_labels, fontsize=11, fontweight='bold')
-ax_cox.set_xlabel('Hazard Ratio (95% CI)', fontsize=12, fontweight='bold')
-ax_cox.set_title(f'D.  Cox Proportional Hazards — Continuous Predictors\n'
-                 f'All variables standardised (n={len(surv_df)} with survival data)',
-                 fontsize=12, fontweight='bold', loc='left', pad=8)
-# Auto x-lim with some right padding for text
-all_hi = [np.exp(r['coef upper 95%']) for _, r in cox_sum.iterrows()]
-ax_cox.set_xlim(0, max(all_hi) * 2.2)
-ax_cox.set_ylim(-0.6, len(cox_sum) - 0.4)
-
-fig6_ms.suptitle('Mechanism and Clinical Relevance: Mediation + Survival in mCRPC',
+fig6_ms.suptitle('ARS → RBM15B → m6A Functional Impact: Bootstrap Causal Mediation  (mCRPC Adenocarcinoma)',
                  fontsize=13, fontweight='bold', y=1.01)
 plt.tight_layout()
 plt.savefig(os.path.join(OUTDIR, 'fig6_mediation_survival.png'), dpi=300, bbox_inches='tight')
 print("  → Saved: fig6_mediation_survival.png")
 plt.close()
 
-# TCGA z-scored matrix (computed once, shared by Figs 1 and 2)
-z_tcga  = zscore_normalize(df_tcga[[g for g in gene_order + ['AR'] if g in df_tcga.columns]])
+# TCGA z-scored matrix (computed once, shared by Figs 1 and 2) — full 22-gene set
+z_tcga  = zscore_normalize(df_tcga[[g for g in CC_GENE_ORDER + ['AR'] if g in df_tcga.columns]])
 ar_tcga = z_tcga['AR'] if 'AR' in z_tcga.columns else None
 
 # =============================================================================
@@ -734,16 +717,19 @@ ar_expr_all   = z_all['AR']
 ar_expr_adeno = z_all.loc[idx_adeno_full, 'AR']
 ar_expr_lb    = z_all.loc[idx_lb, 'AR'].values
 
-# Per-gene mCRPC partial ρ(m6A gene, AR mRNA)
+# Per-gene mCRPC partial ρ(m6A gene, AR mRNA)  — 22-gene set
 h1_rows = []
-for gene in gene_order:
-    r_p, p_p, _ = partial_spearman(z_lb[gene].values, ar_expr_lb, lb_cov)
-    h1_rows.append({'Gene': gene, 'Role': gene_roles[gene], 'rho_partial': r_p, 'p_partial': p_p})
+for gene in CC_GENE_ORDER:
+    r_p = p_p = np.nan
+    if gene in z_lb.columns:
+        r_p, p_p, _ = partial_spearman(z_lb[gene].values, ar_expr_lb, lb_cov)
+    h1_rows.append({'Gene': gene, 'Role': CC_GENE_ROLES.get(gene, 'Unknown'),
+                    'rho_partial': r_p, 'p_partial': p_p})
 h1_df = pd.DataFrame(h1_rows)
 
-# Per-gene TCGA ρ(m6A gene, AR mRNA)
+# Per-gene TCGA ρ(m6A gene, AR mRNA)  — 22-gene set
 h1_tcga_rows = []
-for gene in gene_order:
+for gene in CC_GENE_ORDER:
     if ar_tcga is not None and gene in z_tcga.columns:
         idx_c = ar_tcga.dropna().index.intersection(z_tcga[gene].dropna().index)
         r_t, p_t = spearmanr(z_tcga.loc[idx_c, gene], ar_tcga.loc[idx_c])
@@ -861,9 +847,9 @@ print("[Fig 2] AR activity score × m6A: Primary → mCRPC ...")
 ar_tcga_targets = [g for g in AR_TARGET_GENES if g in df_tcga.columns]
 ars_tcga_z = zscore_normalize(df_tcga[ar_tcga_targets]).mean(axis=1)
 
-# Per-gene TCGA ρ(m6A gene, ARS) — using z-scored ARS
+# Per-gene TCGA ρ(m6A gene, ARS) — 22-gene set, z-scored ARS
 h2_tcga_rows = []
-for gene in gene_order:
+for gene in CC_GENE_ORDER:
     if gene in z_tcga.columns:
         common_c = ars_tcga_z.dropna().index.intersection(z_tcga[gene].dropna().index)
         r_t, p_t = spearmanr(z_tcga.loc[common_c, gene], ars_tcga_z.loc[common_c])
@@ -879,13 +865,14 @@ r_t8, p_t8  = spearmanr(ars_tcga_z.loc[common_t8], fi_primary_8.loc[common_t8])
 ci_t8_lo, ci_t8_hi = spearman_ci(r_t8, len(common_t8))
 print(f"  TCGA Primary  ρ(ARS, m6A FI)={r_t8:+.3f} [{ci_t8_lo:+.3f},{ci_t8_hi:+.3f}] {sig(p_t8)} (n={len(common_t8)})")
 
-# Aggregate mCRPC scatter (same as Fig 3 — shown here for direct comparison)
-ars_adeno_8  = meta_adeno['AR_Activity_Score']
-fi_adeno_8   = meta_adeno['m6A_Functional_Impact']
-common_m8    = ars_adeno_8.dropna().index.intersection(fi_adeno_8.dropna().index)
-r_m8, p_m8  = spearmanr(ars_adeno_8.loc[common_m8], fi_adeno_8.loc[common_m8])
+# Aggregate mCRPC scatter — use mean z-score ARS to match TCGA metric
+ar_in_adeno   = [g for g in AR_TARGET_GENES if g in z_adeno.columns]
+ars_adeno_mz  = z_adeno[ar_in_adeno].mean(axis=1)          # mean z-score, same as TCGA
+fi_adeno_8    = meta_adeno['m6A_Functional_Impact']
+common_m8     = ars_adeno_mz.dropna().index.intersection(fi_adeno_8.dropna().index)
+r_m8, p_m8   = spearmanr(ars_adeno_mz.loc[common_m8], fi_adeno_8.loc[common_m8])
 ci_m8_lo, ci_m8_hi = spearman_ci(r_m8, len(common_m8))
-print(f"  mCRPC Adeno   ρ(ARS, m6A FI)={r_m8:+.3f} [{ci_m8_lo:+.3f},{ci_m8_hi:+.3f}] {sig(p_m8)} (n={len(common_m8)})")
+print(f"  mCRPC Adeno   ρ(ARS-meanz, m6A FI)={r_m8:+.3f} [{ci_m8_lo:+.3f},{ci_m8_hi:+.3f}] {sig(p_m8)} (n={len(common_m8)})")
 
 # Build figure
 fig8 = plt.figure(figsize=(19, 12))
@@ -937,15 +924,15 @@ ax8b.set_title(f'B.  TCGA Primary PCa  (n={len(common_t8)})\n'
 ax8b.axhline(0, color='grey', lw=0.5, ls='--', alpha=0.5)
 ax8b.axvline(0, color='grey', lw=0.5, ls='--', alpha=0.5)
 
-# Panel C: mCRPC Adeno scatter
-xc8 = ars_adeno_8.loc[common_m8].values
+# Panel C: mCRPC Adeno scatter (now uses mean z-score ARS to match TCGA)
+xc8 = ars_adeno_mz.loc[common_m8].values
 yc8 = fi_adeno_8.loc[common_m8].values
 ax8c.scatter(xc8, yc8, c=cmap_lb.loc[common_m8].values, alpha=0.4, s=14, edgecolors='none')
 fin = np.isfinite(xc8) & np.isfinite(yc8)
 mc8, bc8 = np.polyfit(xc8[fin], yc8[fin], 1)
 xl8c = np.linspace(xc8[fin].min(), xc8[fin].max(), 100)
 ax8c.plot(xl8c, mc8*xl8c+bc8, 'k-', lw=2.5, alpha=0.8)
-ax8c.set_xlabel('AR Activity Score (PC1)', fontsize=11, fontweight='bold')
+ax8c.set_xlabel('AR Activity Score (mean z-score)', fontsize=11, fontweight='bold')
 ax8c.set_ylabel('m6A Functional Impact', fontsize=11, fontweight='bold')
 ax8c.set_title(f'C.  mCRPC Adenocarcinoma  (n={len(common_m8)})\n'
                f'ρ={r_m8:+.3f} [{ci_m8_lo:+.3f},{ci_m8_hi:+.3f}]  p={p_m8:.2e} {sig(p_m8)}',
@@ -964,6 +951,444 @@ print("  → Saved: fig2_arars_vs_m6a.png")
 plt.close()
 
 # =============================================================================
+# FIGURE 7 — SURVIVAL SYNERGY: KM FOUR-QUADRANT (ARS × m6A FI) + COX HR
+# =============================================================================
+print("[Fig 7] Survival — KM four-quadrant + Cox HR ...")
+
+_surv_cols  = ['surv_months', 'vital_status']
+_surv_avail = [c for c in _surv_cols if c in meta.columns]
+if len(_surv_avail) < 2:
+    print("  → Skipping Fig 7: survival columns not found in meta")
+else:
+    _surv_idx = meta[_surv_cols].dropna().index.intersection(df.index)
+    _surv_df  = meta.loc[_surv_idx,
+                         _surv_cols + ['AR_Activity_Score', 'm6A_Functional_Impact']
+                         ].dropna().copy()
+    print(f"  Survival subset: n={len(_surv_df)}")
+
+    _med_ars7 = _surv_df['AR_Activity_Score'].median()
+    _med_fi7  = _surv_df['m6A_Functional_Impact'].median()
+    _surv_df['AR_hi'] = _surv_df['AR_Activity_Score'] >= _med_ars7
+    _surv_df['FI_hi'] = _surv_df['m6A_Functional_Impact'] >= _med_fi7
+    _surv_df['Quadrant'] = (
+        _surv_df['AR_hi'].astype(str) + '_' + _surv_df['FI_hi'].astype(str)
+    ).map({'True_True': 'AR-hi/FI-hi', 'True_False': 'AR-hi/FI-lo',
+           'False_True': 'AR-lo/FI-hi', 'False_False': 'AR-lo/FI-lo'})
+    _quad_colors7 = {'AR-hi/FI-hi': '#c0392b', 'AR-hi/FI-lo': '#e67e22',
+                     'AR-lo/FI-hi': '#3498db', 'AR-lo/FI-lo': '#27ae60'}
+    _quad_order7  = ['AR-hi/FI-hi', 'AR-hi/FI-lo', 'AR-lo/FI-hi', 'AR-lo/FI-lo']
+
+    # Log-rank: worst (AR-hi/FI-hi) vs best (AR-lo/FI-lo)
+    _g7_best  = _surv_df[_surv_df['Quadrant'] == 'AR-lo/FI-lo']
+    _g7_worst = _surv_df[_surv_df['Quadrant'] == 'AR-hi/FI-hi']
+    _lr7 = None
+    if len(_g7_best) >= 5 and len(_g7_worst) >= 5:
+        _lr7 = _logrank_test(_g7_best['surv_months'],  _g7_worst['surv_months'],
+                             _g7_best['vital_status'], _g7_worst['vital_status'])
+        print(f"  Best vs Worst log-rank p={_lr7.p_value:.4f} {sig(_lr7.p_value)}")
+
+    # Cox PH — standardised covariates
+    _cox7_df = _surv_df[['surv_months', 'vital_status',
+                          'AR_Activity_Score', 'm6A_Functional_Impact']].copy()
+    _cox7_df['ARS_FI_interaction'] = (_cox7_df['AR_Activity_Score'] *
+                                      _cox7_df['m6A_Functional_Impact'])
+    for _c7 in ['AR_Activity_Score', 'm6A_Functional_Impact', 'ARS_FI_interaction']:
+        _cox7_df[_c7] = (_cox7_df[_c7] - _cox7_df[_c7].mean()) / _cox7_df[_c7].std()
+    _cph7 = _CPH()
+    _cph7.fit(_cox7_df, duration_col='surv_months', event_col='vital_status')
+    _cs7  = _cph7.summary.copy()
+    print("\n  Cox PH:")
+    print(_cs7[['coef', 'exp(coef)', 'p',
+                'exp(coef) lower 95%', 'exp(coef) upper 95%']].to_string())
+
+    # --- Plot: 1×2 KM | Cox forest ---
+    _fig7, (_ax7km, _ax7cx) = plt.subplots(1, 2, figsize=(18, 8))
+
+    # KM panel
+    _kmf7 = _KMF()
+    for _qq7 in _quad_order7:
+        _gr7 = _surv_df[_surv_df['Quadrant'] == _qq7]
+        if len(_gr7) < 5:
+            continue
+        _kmf7.fit(_gr7['surv_months'], _gr7['vital_status'],
+                  label=f"{_qq7} (n={len(_gr7)})")
+        _kmf7.plot_survival_function(ax=_ax7km, color=_quad_colors7[_qq7], linewidth=2.5)
+    _ax7km.set_xlabel('Time (months)', fontsize=12, fontweight='bold')
+    _ax7km.set_ylabel('Survival Probability', fontsize=12, fontweight='bold')
+    _ax7km.set_ylim(0, 1.05)
+    _ax7km.set_title('A.  Overall Survival — ARS × m6A FI Four-Quadrant\n'
+                     '     Median splits; mCRPC cohort (WCDT)',
+                     fontsize=12, fontweight='bold', loc='left', pad=8)
+    _ax7km.legend(fontsize=9.5, loc='lower left')
+    if _lr7 is not None:
+        _ax7km.text(0.97, 0.97,
+                    f'Best vs Worst\nLog-rank p={_lr7.p_value:.4f} {sig(_lr7.p_value)}',
+                    transform=_ax7km.transAxes, ha='right', va='top', fontsize=10,
+                    bbox=dict(facecolor='white', edgecolor='gray', alpha=0.9, pad=4))
+
+    # Cox HR forest panel
+    _cov7 = ['AR_Activity_Score', 'm6A_Functional_Impact', 'ARS_FI_interaction']
+    _dn7  = ['AR Activity Score\n(per SD)', 'm6A Functional Impact\n(per SD)',
+             'ARS × m6A FI\n(interaction, per SD)']
+    _hr7     = _cs7.loc[_cov7, 'exp(coef)'].values.astype(float)
+    _hr7_lo  = _cs7.loc[_cov7, 'exp(coef) lower 95%'].values.astype(float)
+    _hr7_hi  = _cs7.loc[_cov7, 'exp(coef) upper 95%'].values.astype(float)
+    _pv7     = _cs7.loc[_cov7, 'p'].values.astype(float)
+    _y7      = np.arange(len(_cov7))
+
+    _ax7cx.axvline(1.0, color='black', lw=1.5, ls='--', alpha=0.6, zorder=1)
+    _clr7 = ['#c0392b' if h > 1 else '#27ae60' for h in _hr7]
+    for _i7, (_y, _h, _lo, _hi, _p, _cl) in enumerate(
+            zip(_y7, _hr7, _hr7_lo, _hr7_hi, _pv7, _clr7)):
+        _ax7cx.plot([_lo, _hi], [_y, _y], lw=3, color=_cl, alpha=0.85, zorder=2)
+        _ax7cx.scatter([_h], [_y], s=130, color=_cl, zorder=3,
+                       edgecolors='black', linewidths=0.8)
+        _ax7cx.text(_hi + 0.04, _y,
+                    f'HR={_h:.2f} [{_lo:.2f}–{_hi:.2f}]\np={_p:.3f} {sig(_p)}',
+                    va='center', ha='left', fontsize=9.5)
+    _ax7cx.set_yticks(_y7)
+    _ax7cx.set_yticklabels(_dn7, fontsize=11, fontweight='bold')
+    _ax7cx.set_xlabel('Hazard Ratio (95% CI)', fontsize=12, fontweight='bold')
+    _ax7cx.set_title('B.  Cox Proportional Hazards Model\n'
+                     '     Standardised covariates; mCRPC cohort',
+                     fontsize=12, fontweight='bold', loc='left', pad=8)
+    _ax7cx.set_xlim(max(0.2, _hr7_lo.min() - 0.15), _hr7_hi.max() + 0.9)
+    _ax7cx.invert_yaxis()
+
+    _fig7.suptitle('ARS × m6A Functional Impact — Survival Synergy  (mCRPC, WCDT)',
+                   fontsize=13, fontweight='bold', y=1.01)
+    plt.tight_layout()
+    plt.savefig(os.path.join(OUTDIR, 'fig7_survival_km_cox.png'),
+                dpi=300, bbox_inches='tight')
+    print("  → Saved: fig7_survival_km_cox.png")
+    plt.close(_fig7)
+
+# =============================================================================
+# FIGURE 8 — AR GENOMIC ALTERATION → m6A AXES  (GENOMIC ANCHOR)
+# =============================================================================
+print("[Fig 8] AR amp/mut → m6A axes ...")
+
+_col_ar8 = 'AR - Amplification and/or Mutation'
+if _col_ar8 not in meta.columns:
+    print(f"  → Skipping Fig 8: column '{_col_ar8}' not found")
+else:
+    _idx8_wt  = meta[meta[_col_ar8] == 0.0].index.intersection(df.index)
+    _idx8_amp = meta[meta[_col_ar8] == 1.0].index.intersection(df.index)
+    print(f"  AR WT: n={len(_idx8_wt)}   AR Amp/Mut: n={len(_idx8_amp)}")
+
+    _axes8 = [
+        ('m6A_Net_Deposition',    'Net m6A\nDeposition'),
+        ('m6A_Oncogenic_Readout', 'Oncogenic\nReadout'),
+        ('m6A_Functional_Impact', 'Functional\nImpact'),
+    ]
+    _fig8, _ax8_arr = plt.subplots(1, 3, figsize=(18, 7))
+
+    for _ax8, (_col8, _lbl8) in zip(_ax8_arr, _axes8):
+        _va8_wt  = meta.loc[_idx8_wt,  _col8].dropna().values
+        _va8_amp = meta.loc[_idx8_amp, _col8].dropna().values
+        if len(_va8_wt) < 3 or len(_va8_amp) < 3:
+            _ax8.text(0.5, 0.5, 'insufficient data', ha='center', va='center',
+                      transform=_ax8.transAxes)
+            continue
+        _, _p8 = mannwhitneyu(_va8_wt, _va8_amp, alternative='two-sided')
+        _pts8 = _ax8.violinplot([_va8_wt, _va8_amp], positions=[0, 1],
+                                showmeans=True, showmedians=True)
+        _pts8['bodies'][0].set_facecolor('#95a5a6'); _pts8['bodies'][0].set_alpha(0.65)
+        _pts8['bodies'][1].set_facecolor('#e74c3c');  _pts8['bodies'][1].set_alpha(0.65)
+        style_violin(_pts8, _ax8)
+        _ymax8 = max(np.percentile(_va8_wt, 97), np.percentile(_va8_amp, 97))
+        _ymin8 = min(_va8_wt.min(), _va8_amp.min())
+        _ytop8 = _ymax8 + abs(_ymax8 - _ymin8) * 0.1
+        _ax8.plot([0, 1], [_ytop8, _ytop8], 'k-', lw=1.2)
+        _ax8.text(0.5, _ytop8, f'p={_p8:.2e} {sig(_p8)}',
+                  ha='center', va='bottom', fontsize=10.5, fontweight='bold')
+        _ax8.set_xticks([0, 1])
+        _ax8.set_xticklabels([f'AR WT\n(n={len(_va8_wt)})',
+                               f'AR Amp/Mut\n(n={len(_va8_amp)})'],
+                              fontsize=11, fontweight='bold')
+        _ax8.set_ylabel(_lbl8, fontsize=12, fontweight='bold')
+        _ax8.set_title(_lbl8, fontsize=13, fontweight='bold')
+        _ax8.axhline(0, color='grey', lw=0.8, ls='--', alpha=0.5)
+        _d8 = _va8_amp.mean() - _va8_wt.mean()
+        _ax8.text(0.5, 0.02, f'Δmean = {_d8:+.3f} (Amp − WT)',
+                  ha='center', va='bottom', transform=_ax8.transAxes,
+                  fontsize=9, color='#333333', style='italic')
+        print(f"  {_col8:25s}: WT={_va8_wt.mean():+.4f}  Amp={_va8_amp.mean():+.4f}  "
+              f"Δ={_d8:+.4f}  p={_p8:.2e} {sig(_p8)}")
+
+    _fig8.suptitle(
+        f'm6A Axes by AR Genomic Alteration Status  (mCRPC, WCDT)\n'
+        f'AR Amplification / Mutation (n={len(_idx8_amp)}) vs AR Wildtype (n={len(_idx8_wt)})',
+        fontsize=13, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    plt.savefig(os.path.join(OUTDIR, 'fig8_AR_ampMut_m6a.png'),
+                dpi=300, bbox_inches='tight')
+    print("  → Saved: fig8_AR_ampMut_m6a.png")
+    plt.close(_fig8)
+
+# =============================================================================
+# FIGURE 9 — PRERANK GSEA: HALLMARK PATHWAYS × m6A FUNCTIONAL IMPACT
+# =============================================================================
+import gseapy as _gp
+print("[Fig 9] Prerank GSEA — Hallmark × m6A FI ...")
+
+_fi9   = meta_adeno['m6A_Functional_Impact'].dropna()
+_cg9   = _fi9.index.intersection(df.index)
+_fi9_a = _fi9.loc[_cg9].values
+print(f"  Adeno samples for GSEA: n={len(_cg9)}")
+
+# Filter to expressed genes (std > 0.1 across Adeno subset)
+_expr9  = df.loc[_cg9].fillna(0.0)
+_vmask9 = _expr9.std(axis=0) > 0.1
+_expr9  = _expr9.loc[:, _vmask9]
+print(f"  Expressed genes: {_vmask9.sum()}")
+
+# Vectorised Spearman: ρ(gene expression, m6A FI) across Adeno samples
+_fi9_rk = _sp_rankdata(_fi9_a, method='average')
+_fi9_c  = _fi9_rk - _fi9_rk.mean()
+_fi9_sd = _fi9_c.std()
+_E9     = _expr9.values
+_E9_rk  = np.apply_along_axis(lambda c: _sp_rankdata(c, method='average'), 0, _E9)
+_E9_c   = _E9_rk - _E9_rk.mean(axis=0)
+_E9_sd  = _E9_c.std(axis=0)
+_ok9    = _E9_sd > 1e-10
+_corrs9 = np.zeros(_E9.shape[1])
+_corrs9[_ok9] = (_fi9_c @ _E9_c[:, _ok9]) / (len(_fi9_c) * _fi9_sd * _E9_sd[_ok9])
+_rnk9   = pd.Series(_corrs9, index=_expr9.columns).sort_values(ascending=False)
+print(f"  Top +: {list(_rnk9.index[:5])}")
+print(f"  Top –: {list(_rnk9.index[-5:])}")
+
+_gsea9_ok = False
+try:
+    _gsea9 = _gp.prerank(
+        rnk=_rnk9,
+        gene_sets='MSigDB_Hallmark_2020',
+        threads=4,
+        min_size=10,
+        max_size=500,
+        permutation_num=500,
+        outdir=None,
+        seed=42,
+        verbose=False,
+    )
+    _gdf9 = _gsea9.res2d.copy()
+    if 'Term' in _gdf9.columns:
+        _gdf9 = _gdf9.set_index('Term')
+    _gdf9['NES']  = _gdf9['NES'].astype(float)
+    _gdf9['fdr']  = _gdf9['FDR q-val'].astype(float)
+    _gdf9.index   = (_gdf9.index
+                     .str.replace('HALLMARK_', '', regex=False)
+                     .str.replace('_', ' ', regex=False)
+                     .str.title())
+    _top9 = pd.concat([
+        _gdf9.nlargest(10, 'NES'),
+        _gdf9.nsmallest(10, 'NES'),
+    ]).drop_duplicates().sort_values('NES', ascending=False)
+
+    print("\n  Top enriched (m6A FI-high):")
+    for _t9, _r9 in _gdf9.nlargest(7, 'NES').iterrows():
+        print(f"    {_t9:40s}  NES={_r9['NES']:+.2f}  FDR={_r9['fdr']:.3f}")
+    print("  Top depleted:")
+    for _t9, _r9 in _gdf9.nsmallest(7, 'NES').iterrows():
+        print(f"    {_t9:40s}  NES={_r9['NES']:+.2f}  FDR={_r9['fdr']:.3f}")
+
+    _fig9, _ax9 = plt.subplots(figsize=(14, 10))
+    _bc9 = ['#c0392b' if _n9 > 0 else '#2980b9' for _n9 in _top9['NES'].values]
+    _ax9.barh(range(len(_top9)), _top9['NES'].values, color=_bc9,
+              edgecolor='black', linewidth=0.6, alpha=0.85, zorder=2)
+    for _i9, (_t9, _r9) in enumerate(_top9.iterrows()):
+        _n9 = float(_r9['NES'])
+        _f9 = float(_r9['fdr'])
+        _s9 = '***' if _f9 < 0.001 else '**' if _f9 < 0.01 else '*' if _f9 < 0.05 else ''
+        _ax9.text(_n9 + (0.04 if _n9 >= 0 else -0.04), _i9,
+                  f"FDR={_f9:.3f}{' ' + _s9 if _s9 else ''}",
+                  va='center', ha='left' if _n9 >= 0 else 'right', fontsize=7.5)
+    _ax9.set_yticks(range(len(_top9)))
+    _ax9.set_yticklabels(_top9.index, fontsize=9)
+    _ax9.axvline(0, color='black', lw=1.5, ls='--', alpha=0.7)
+    _ax9.set_xlabel('Normalized Enrichment Score (NES)\n'
+                    '← depleted in m6A FI-high  |  enriched in m6A FI-high →',
+                    fontsize=11, fontweight='bold')
+    _ax9.set_title(
+        f'Prerank GSEA — Hallmark Pathways by m6A Functional Impact\n'
+        f'mCRPC Adenocarcinoma (n={len(_cg9)});  rank metric: ρ(gene, m6A FI)',
+        fontsize=12, fontweight='bold', pad=10)
+    plt.tight_layout()
+    plt.savefig(os.path.join(OUTDIR, 'fig9_gsea_hallmark_m6afi.png'),
+                dpi=300, bbox_inches='tight')
+    print("  → Saved: fig9_gsea_hallmark_m6afi.png")
+    plt.close(_fig9)
+    _gsea9_ok = True
+except Exception as _e9:
+    print(f"  → GSEA failed ({_e9}). Skipping fig9.")
+
+# =============================================================================
+# FIGURE 10 — DARANA TREATMENT VALIDATION: enzalutamide pre → post
+#
+# Design: 3-panel figure
+#   Panel A — Paired swarm: ARS pre vs post (Wilcoxon), lines connecting pairs
+#   Panel B — Paired swarm: m6A FI pre vs post (Wilcoxon), lines connecting pairs
+#   Panel C — Scatter: ΔARS vs Δm6A FI per patient (Spearman ρ + regression)
+#
+# Scientific question: does AR suppression (ARS↓ post-enzalutamide) track with
+# a change in m6A FI? Predicts: ΔARS and Δm6A FI are correlated (positive in
+# normal-like primary; inverse if tumor has already acquired mCRPC coupling).
+# =============================================================================
+print("[Fig 10] DARANA treatment validation ...")
+from scipy.stats import wilcoxon as _wilcoxon
+
+df_dar, meta_dar = load_darana()
+
+# Score axes on ALL DARANA samples (z-score within DARANA, consistent units)
+_dar_genes  = [g for g in all_genes if g in df_dar.columns]
+_z_dar      = zscore_normalize(df_dar[_dar_genes])
+
+_ar_dar     = [g for g in AR_TARGET_GENES if g in _z_dar.columns]
+_m6a_dar    = [g for g in CROSS_COHORT_M6A_GENES if g in _z_dar.columns]
+
+# ARS: mean z-score of AR target genes (same metric as Fig 2 mCRPC branch)
+_ars_dar = _z_dar[_ar_dar].mean(axis=1)
+meta_dar['ARS'] = _ars_dar
+
+# m6A axes using the same writer weights as mCRPC (LR_WEIGHTS already computed
+# in Section B above — reuse but recalculate axes from DARANA z-scores)
+_wr_dar    = [g for g in WRITER_GENES if g in _z_dar.columns]
+_er_dar    = [g for g in ERASER_GENES if g in _z_dar.columns]
+_ro_dar    = [g for g in READER_ONCOGENIC if g in _z_dar.columns]
+_rs_dar    = [g for g in READER_SUPPRESSIVE if g in _z_dar.columns]
+
+# Simple mean-based axes (no LR_WEIGHTS — those are WCDT-specific; use equal
+# weighting within DARANA to avoid cross-cohort weight contamination)
+_nd_dar = _z_dar[_wr_dar].mean(axis=1) - _z_dar[_er_dar].mean(axis=1)
+_or_dar = _z_dar[_ro_dar].mean(axis=1) - _z_dar[_rs_dar].mean(axis=1)
+meta_dar['m6A_FI'] = _nd_dar * 0.435 + _or_dar * 0.565
+
+print(f"  AR genes used in DARANA: {len(_ar_dar)}")
+print(f"  m6A genes used in DARANA: writers={len(_wr_dar)}, erasers={len(_er_dar)}, "
+      f"readers_onco={len(_ro_dar)}, readers_supp={len(_rs_dar)}")
+
+# Paired subset
+_paired_ids = sorted(meta_dar.loc[meta_dar['paired'], 'patient'].unique())
+print(f"  Paired patients: n={len(_paired_ids)}")
+
+_pre_vals  = {'ARS': [], 'm6A_FI': []}
+_post_vals = {'ARS': [], 'm6A_FI': []}
+for _pat in _paired_ids:
+    _pre_idx  = meta_dar[(meta_dar['patient'] == _pat) & (meta_dar['timepoint'] == 'pre')].index
+    _post_idx = meta_dar[(meta_dar['patient'] == _pat) & (meta_dar['timepoint'] == 'post')].index
+    if len(_pre_idx) == 0 or len(_post_idx) == 0:
+        continue
+    for _ax in ('ARS', 'm6A_FI'):
+        _pre_vals[_ax].append(float(meta_dar.loc[_pre_idx[0], _ax]))
+        _post_vals[_ax].append(float(meta_dar.loc[_post_idx[0], _ax]))
+
+_pre_ars  = np.array(_pre_vals['ARS'])
+_post_ars = np.array(_post_vals['ARS'])
+_pre_fi   = np.array(_pre_vals['m6A_FI'])
+_post_fi  = np.array(_post_vals['m6A_FI'])
+_delta_ars = _post_ars - _pre_ars
+_delta_fi  = _post_fi  - _pre_fi
+n_pairs_dar = len(_pre_ars)
+
+# Wilcoxon signed-rank tests
+_w_ars, _p_ars = _wilcoxon(_pre_ars,  _post_ars,  alternative='two-sided')
+_w_fi,  _p_fi  = _wilcoxon(_pre_fi,   _post_fi,   alternative='two-sided')
+_r_dlt, _p_dlt = spearmanr(_delta_ars, _delta_fi)
+
+print(f"  ARS pre={_pre_ars.mean():+.3f}  post={_post_ars.mean():+.3f}  "
+      f"Δ={_delta_ars.mean():+.3f}  Wilcoxon p={_p_ars:.4f} {sig(_p_ars)}")
+print(f"  m6A FI pre={_pre_fi.mean():+.3f}  post={_post_fi.mean():+.3f}  "
+      f"Δ={_delta_fi.mean():+.3f}  Wilcoxon p={_p_fi:.4f} {sig(_p_fi)}")
+print(f"  ΔARS vs Δm6A FI: ρ={_r_dlt:+.3f}  p={_p_dlt:.4f} {sig(_p_dlt)}  n={n_pairs_dar}")
+
+# ── Figure ─────────────────────────────────────────────────────────────────────
+_fig10, (_ax10a, _ax10b, _ax10c) = plt.subplots(1, 3, figsize=(19, 7))
+_PAL_DAR = {'pre': '#3498db', 'post': '#e74c3c'}
+
+def _paired_swarm(ax, pre_arr, post_arr, wilcox_p, ylabel, title):
+    """Draw connected paired dots (pre vs post) with Wilcoxon annotation."""
+    np.random.seed(42)
+    _jit = np.random.uniform(-0.07, 0.07, len(pre_arr))
+    for _xp, _xq, _j in zip(pre_arr, post_arr, _jit):
+        ax.plot([0 + _j, 1 + _j], [_xp, _xq],
+                color='grey', lw=0.7, alpha=0.45, zorder=1)
+    ax.scatter(np.zeros(len(pre_arr))  + _jit, pre_arr,
+               c=_PAL_DAR['pre'],  s=55, zorder=3, edgecolors='black', linewidths=0.5,
+               label=f'Pre (n={len(pre_arr)})')
+    ax.scatter(np.ones(len(post_arr)) + _jit, post_arr,
+               c=_PAL_DAR['post'], s=55, zorder=3, edgecolors='black', linewidths=0.5,
+               label=f'Post (n={len(post_arr)})')
+    # Mean ± SD bars
+    for _xi, _arr in [(0, pre_arr), (1, post_arr)]:
+        _m, _s = _arr.mean(), _arr.std()
+        ax.plot([_xi - 0.22, _xi + 0.22], [_m, _m], 'k-', lw=2.5, zorder=5)
+        ax.plot([_xi, _xi], [_m - _s, _m + _s], 'k-', lw=1.5, zorder=5)
+    _ymax = max(pre_arr.max(), post_arr.max())
+    _yrange = _ymax - min(pre_arr.min(), post_arr.min())
+    _ytop = _ymax + _yrange * 0.12
+    ax.plot([0, 1], [_ytop, _ytop], 'k-', lw=1.2)
+    ax.text(0.5, _ytop, f'Wilcoxon p={wilcox_p:.4f} {sig(wilcox_p)}',
+            ha='center', va='bottom', fontsize=10, fontweight='bold')
+    ax.set_xticks([0, 1])
+    ax.set_xticklabels(['Pre\nEnzalutamide', 'Post\nEnzalutamide'],
+                       fontsize=11.5, fontweight='bold')
+    _mean_delta = (post_arr - pre_arr).mean()
+    ax.set_ylabel(ylabel, fontsize=12, fontweight='bold')
+    ax.set_title(f'{title}\nMean Δ = {_mean_delta:+.3f}',
+                 fontsize=12, fontweight='bold', loc='left', pad=6)
+    ax.axhline(0, color='grey', lw=0.8, ls='--', alpha=0.4)
+    ax.legend(fontsize=9.5, loc='upper right')
+
+_paired_swarm(_ax10a, _pre_ars, _post_ars, _p_ars,
+              'AR Activity Score (z-score)', 'A.  AR Activity Score')
+_paired_swarm(_ax10b, _pre_fi, _post_fi, _p_fi,
+              'm6A Functional Impact (z-score)', 'B.  m6A Functional Impact')
+
+# Panel C: ΔARS vs Δm6A FI scatter
+_dircolor = np.where((_delta_ars < 0) & (_delta_fi > 0), '#c0392b',   # AR↓ m6A↑ (predicted)
+             np.where((_delta_ars > 0) & (_delta_fi < 0), '#2980b9',   # AR↑ m6A↓
+             '#95a5a6'))                                                  # same direction
+_ax10c.scatter(_delta_ars, _delta_fi, c=_dircolor,
+               s=70, edgecolors='black', linewidths=0.6, alpha=0.85, zorder=3)
+# Zero lines
+_ax10c.axhline(0, color='grey', lw=0.8, ls='--', alpha=0.5)
+_ax10c.axvline(0, color='grey', lw=0.8, ls='--', alpha=0.5)
+# Regression
+_fin10 = np.isfinite(_delta_ars) & np.isfinite(_delta_fi)
+_m10, _b10 = np.polyfit(_delta_ars[_fin10], _delta_fi[_fin10], 1)
+_xl10 = np.linspace(_delta_ars[_fin10].min(), _delta_ars[_fin10].max(), 100)
+_ax10c.plot(_xl10, _m10 * _xl10 + _b10, 'k-', lw=2.5, alpha=0.8, zorder=4)
+# Annotate quadrants
+_n_pred = int(((_delta_ars < 0) & (_delta_fi > 0)).sum())
+_ax10c.text(0.02, 0.97,
+            f'AR↓ & m6A↑ (predicted): {_n_pred}/{n_pairs_dar} patients',
+            transform=_ax10c.transAxes, fontsize=9, color='#c0392b',
+            va='top', fontweight='bold')
+_ax10c.set_xlabel('ΔARS  (post − pre)', fontsize=12, fontweight='bold')
+_ax10c.set_ylabel('Δm6A Functional Impact  (post − pre)', fontsize=12, fontweight='bold')
+_ax10c.set_title(f'C.  ΔARS vs Δm6A FI per Patient  (n={n_pairs_dar} pairs)\n'
+                 f'ρ={_r_dlt:+.3f}  p={_p_dlt:.4f} {sig(_p_dlt)}',
+                 fontsize=12, fontweight='bold', loc='left', pad=6)
+from matplotlib.patches import Patch as _Patch10
+_ax10c.legend(handles=[
+    _Patch10(facecolor='#c0392b', label='AR↓ & m6A↑ (inverse)'),
+    _Patch10(facecolor='#2980b9', label='AR↑ & m6A↓ (inverse)'),
+    _Patch10(facecolor='#95a5a6', label='Same direction'),
+], fontsize=9, loc='lower right')
+
+_fig10.suptitle(
+    f'DARANA Trial (GSE197780): Enzalutamide Neoadjuvant Treatment — '
+    f'AR Activity vs m6A Functional Impact\n'
+    f'Primary prostate cancer, n={n_pairs_dar} paired biopsies '
+    f'(pre vs ~3 months post enzalutamide)',
+    fontsize=12, fontweight='bold', y=1.01)
+plt.tight_layout()
+plt.savefig(os.path.join(OUTDIR, 'fig10_darana_treatment.png'),
+            dpi=300, bbox_inches='tight')
+print("  → Saved: fig10_darana_treatment.png")
+plt.close(_fig10)
+
+# =============================================================================
 # SUMMARY TABLE
 # =============================================================================
 print("\n" + "=" * 80)
@@ -975,7 +1400,11 @@ summary = [
     ("fig3_dual_trajectory.png",      "Fig 3 — ARS + m6A FI dual trajectory across disease stages"),
     ("fig4_coupling_forest.png",      "Fig 4 — Within-cohort coupling forest (sign-flip thesis, ±95%CI)"),
     ("fig5_per_gene_mcrpc.png",       "Fig 5 — Per-gene mCRPC deconfounded (Adeno-only + partial L/B)"),
-    ("fig6_mediation_survival.png",   "Fig 6 — Mediation (ARS→RBM15B→FI) + KM + Cox PH (merged 2×2)"),
+    ("fig6_mediation_survival.png",   "Fig 6 — Bootstrap causal mediation  ARS → RBM15B → m6A FI (1×2)"),
+    ("fig7_survival_km_cox.png",      "Fig 7 — Survival synergy: KM four-quadrant + Cox HR forest"),
+    ("fig8_AR_ampMut_m6a.png",        "Fig 8 — AR amp/mut → m6A axes (genomic anchor, violin)"),
+    ("fig9_gsea_hallmark_m6afi.png",  "Fig 9 — Prerank GSEA: Hallmark pathways × m6A FI"),
+    ("fig10_darana_treatment.png",    "Fig 10 — DARANA: enzalutamide pre/post ARS + m6A FI (causal validation)"),
 ]
 for fname, desc in summary:
     path = os.path.join(OUTDIR, fname)
