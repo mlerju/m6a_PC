@@ -94,11 +94,24 @@ MCRPC_MANUAL_WEIGHTS = {
 #     Kawakami et al. 2006 Clin Cancer Res (FOLH1/PSMA)
 #     Korkmaz et al. 2009 Clin Cancer Res (STEAP2)
 #     Maher et al. 2009 Science 326:1258 (SLC45A3)
+#   Tier 3 (expanded from GeneList_PC_WholeTranscriptome.xlsx AR/SR signatures;
+#           retained only genes present in ≥3 independent core AR sigs
+#           [Hieronymus 2006, MSigDB Hallmark AR, Kumar 2016, Spratt 2019-A]
+#           and biologically validated as AR-activated targets):
+#     ACSL3  — in all 4 core sigs; fatty acid CoA ligase, direct ARE target
+#     ELL2   — in 3/4 core sigs; elongation factor for RNA Pol II, prostate AR target
+#     ABCC4  — in 3/4 core sigs; AR-regulated efflux transporter (Dean 2003 Genome Biol)
+#     MAF    — in 3/4 core sigs; c-Maf bZIP TF, AR-induced in luminal PCa
+#     ZBTB10 — in 3/4 core sigs; zinc-finger AR target (Sp1/Sp3 repressor)
+#     SGK1   — MSigDB Hallmark AR; serum/glucocorticoid kinase, AR-survival axis in mCRPC
+#     CAMKK2 — MSigDB Hallmark AR; confirmed direct AR target (Massie 2011 Nature)
 # HOXB13 removed: pioneer factor upstream of AR, not a downstream output
 #   (Sahu et al. 2011 Cell 147:1368; Huang et al. 2014 Cell 155:1135)
 # ALDH1A3 removed: NEPC/stem-cell marker inversely related to AR activity
 #   (Bhatt et al. 2017 JCI Insight; Smith et al. 2022 Nat Commun)
+# CENPN excluded: centromere protein — cell-cycle confound, not AR-specific
 AR_TARGET_GENES = [
+    # ── Tier 1: original 10 core genes ──
     'KLK3',    # PSA — most canonical AR target (Riegman 1991)
     'KLK2',    # hK2 — AR target, high precision (Riegman 1989)
     'FKBP5',   # direct AR target, steroid chaperone (Febbo 2005 JNCI)
@@ -109,4 +122,12 @@ AR_TARGET_GENES = [
     'FOLH1',   # PSMA — AR-regulated, theranostic target (Kawakami 2006 CCR)
     'STEAP2',  # androgen-regulated cell surface protein (Korkmaz 2009 CCR)
     'SLC45A3', # AR target, solute carrier (Maher 2009 Science)
+    # ── Tier 3: expansion from GeneList_PC_WholeTranscriptome.xlsx ──
+    'ACSL3',   # fatty acid CoA ligase; in all 4 core AR sigs
+    'ELL2',    # RNA Pol II elongation factor; in 3/4 core AR sigs
+    'ABCC4',   # AR-regulated efflux pump; in 3/4 core AR sigs
+    'MAF',     # c-Maf bZIP TF; in 3/4 core AR sigs
+    'ZBTB10',  # zinc-finger AR target; in 3/4 core AR sigs
+    'SGK1',    # serum/glucocorticoid kinase; MSigDB Hallmark AR
+    'CAMKK2',  # CaM kinase kinase 2; confirmed AR target (Massie 2011 Nature)
 ]

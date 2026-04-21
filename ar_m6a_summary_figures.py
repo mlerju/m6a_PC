@@ -30,7 +30,6 @@ import seaborn as sns
 from matplotlib.patches import Patch, FancyArrowPatch
 from scipy.stats import spearmanr, kruskal, rankdata as _rankdata, pearsonr as _pearsonr
 from scipy.stats import t as _t_dist, mannwhitneyu, rankdata as _sp_rankdata
-from sklearn.decomposition import PCA as _PCA
 from sklearn.linear_model import LogisticRegression as _LR
 from lifelines import KaplanMeierFitter as _KMF, CoxPHFitter as _CPH
 from lifelines.statistics import logrank_test as _logrank_test
@@ -188,14 +187,9 @@ meta['m6A_Net_Deposition']    = dd_w - z_all[ERASER_GENES].mean(axis=1)
 meta['m6A_Oncogenic_Readout'] = z_all[READER_ONCOGENIC].mean(axis=1) - z_all[READER_SUPPRESSIVE].mean(axis=1)
 meta['m6A_Functional_Impact'] = meta['m6A_Net_Deposition'] * 0.435 + meta['m6A_Oncogenic_Readout'] * 0.565
 
-# ARS — PC1 (primary)
+# ARS — mean z-score (consistent with TCGA, cross-cohort, and DARANA computations)
 ar_in_data = [g for g in AR_TARGET_GENES if g in z_all.columns]
-ARS_simple = z_all[ar_in_data].mean(axis=1)
-_pca_ar    = _PCA(n_components=1, random_state=42)
-_pc1_raw   = _pca_ar.fit_transform(z_all[ar_in_data].values)[:, 0]
-if np.corrcoef(_pc1_raw, ARS_simple.values)[0, 1] < 0:
-    _pc1_raw = -_pc1_raw
-meta['AR_Activity_Score'] = pd.Series(_pc1_raw, index=z_all.index)
+meta['AR_Activity_Score'] = z_all[ar_in_data].mean(axis=1)
 
 # Group indices
 idx_adeno = meta[meta['histology'] == 'Adenocarcinoma'].index.intersection(df.index)
@@ -865,9 +859,8 @@ r_t8, p_t8  = spearmanr(ars_tcga_z.loc[common_t8], fi_primary_8.loc[common_t8])
 ci_t8_lo, ci_t8_hi = spearman_ci(r_t8, len(common_t8))
 print(f"  TCGA Primary  ρ(ARS, m6A FI)={r_t8:+.3f} [{ci_t8_lo:+.3f},{ci_t8_hi:+.3f}] {sig(p_t8)} (n={len(common_t8)})")
 
-# Aggregate mCRPC scatter — use mean z-score ARS to match TCGA metric
-ar_in_adeno   = [g for g in AR_TARGET_GENES if g in z_adeno.columns]
-ars_adeno_mz  = z_adeno[ar_in_adeno].mean(axis=1)          # mean z-score, same as TCGA
+# Aggregate mCRPC scatter — ARS already mean z-score, use adeno subset directly
+ars_adeno_mz  = ars_adeno_s
 fi_adeno_8    = meta_adeno['m6A_Functional_Impact']
 common_m8     = ars_adeno_mz.dropna().index.intersection(fi_adeno_8.dropna().index)
 r_m8, p_m8   = spearmanr(ars_adeno_mz.loc[common_m8], fi_adeno_8.loc[common_m8])
@@ -932,7 +925,7 @@ fin = np.isfinite(xc8) & np.isfinite(yc8)
 mc8, bc8 = np.polyfit(xc8[fin], yc8[fin], 1)
 xl8c = np.linspace(xc8[fin].min(), xc8[fin].max(), 100)
 ax8c.plot(xl8c, mc8*xl8c+bc8, 'k-', lw=2.5, alpha=0.8)
-ax8c.set_xlabel('AR Activity Score (mean z-score)', fontsize=11, fontweight='bold')
+ax8c.set_xlabel('AR Activity Score (z-score)', fontsize=11, fontweight='bold')
 ax8c.set_ylabel('m6A Functional Impact', fontsize=11, fontweight='bold')
 ax8c.set_title(f'C.  mCRPC Adenocarcinoma  (n={len(common_m8)})\n'
                f'ρ={r_m8:+.3f} [{ci_m8_lo:+.3f},{ci_m8_hi:+.3f}]  p={p_m8:.2e} {sig(p_m8)}',

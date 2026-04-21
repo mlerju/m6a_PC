@@ -453,7 +453,7 @@ print("\n--- Plot 08: ARS trajectory sensitivity ---")
 fig, axes_sens = plt.subplots(1, 3, figsize=(19, 6))
 
 for ax, (ars_grps, panel_title) in zip(axes_sens, [
-    (ars_groups,      f'Full ARS ({len(ar_avail)} genes)\nIncludes ALDH1A3, HOXB13, NKX3-1'),
+    (ars_groups,      f'Full ARS ({len(ar_avail)} genes)\nTier 1 (secretory + luminal) + Tier 3 expansions'),
     (ars_sec_groups,  f'Secretory-only ({len(AR_SECRETORY)} genes)\nKLK3, KLK2, FKBP5, TMPRSS2, STEAP2, SLC45A3'),
     (ars_core_groups, f'Core ({len(AR_CORE)} genes)\nSecretory + FOLH1 (PSMA)'),
 ]):
@@ -479,7 +479,7 @@ for ax, (ars_grps, panel_title) in zip(axes_sens, [
     ax.legend(fontsize=8)
 
 plt.suptitle('ARS Cross-Cohort Trajectory — Sensitivity to Gene Panel Composition\n'
-             'Are trajectory conclusions driven by ALDH1A3, HOXB13, or NKX3-1 (luminal identity genes)?',
+             'Full 17-gene ARS vs secretory-only (6) vs core secretory+PSMA (7)',  
              fontsize=13, fontweight='bold', y=1.02)
 plt.tight_layout()
 plt.savefig(os.path.join(OUTDIR, '08_ARS_sensitivity_gene_panel.png'), dpi=300, bbox_inches='tight')

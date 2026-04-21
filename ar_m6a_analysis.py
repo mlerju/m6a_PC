@@ -19,8 +19,8 @@ Analysis structure:
   Part X    — Confound-controlled AR × m6A: Adeno-only + partial corr + mediation (30–36)
 
 Methodological improvements vs prior version:
-  - ARS: flat mean replaced by PC1 (dominant co-expression axis, unsupervised)
-  - ARS_LR: supervised alternative trained on AR Amp/Mut vs WT (sensitivity check)
+  - ARS: mean z-score of AR target genes (consistent with TCGA, cross-cohort, and DARANA)
+  - ARS_PC1: PC1 alternative stored for sensitivity; ARS_LR: supervised alternative (AR Amp/Mut)
   - AR Signaling Efficiency: ARS residualized on AR mRNA (captures mRNA-independent induction)
   - TCGA m6A axes: now use same LR writer weights as mCRPC (methodological consistency)
   - New plots 01b/01c: scoring method stability + AR efficiency validation
@@ -145,9 +145,10 @@ ARS_LR = pd.Series(
     z_all[ar_avail].values @ np.array([LR_AR_WEIGHTS[g] for g in ar_avail]),
     index=z_all.index, name='ARS_LR')
 
-# Primary ARS = PC1 (unsupervised; most robust to label choice)
-meta['AR_Activity_Score'] = ARS_PC1
-meta['ARS_simple']         = ARS_simple
+# Primary ARS = mean z-score (consistent with TCGA, cross-cohort, and DARANA computations)
+# PC1 and LR saved separately for sensitivity validation
+meta['AR_Activity_Score'] = ARS_simple
+meta['ARS_PC1']            = ARS_PC1
 meta['ARS_LR']             = ARS_LR
 
 _r_pc1_mean = np.corrcoef(ARS_PC1.values, ARS_simple.values)[0, 1]
@@ -366,10 +367,10 @@ ax.set_title('m6A Gene Correlation with AR Activity Score (mCRPC)\n'
              'W=Writer, E=Eraser, R-onc=Oncogenic Reader, R-sup=Suppressive Reader',
              fontsize=13, fontweight='bold', pad=12)
 legend_els = [
-    Patch(facecolor='#2980b9', label='Writer (+)'), Patch(facecolor='#85c1e9', label='Writer (−)'),
-    Patch(facecolor='#e74c3c', label='Eraser (+)'),
-    Patch(facecolor='#e67e22', label='Onco Reader (+)'), Patch(facecolor='#f0b27a', label='Onco Reader (−)'),
-    Patch(facecolor='#8e44ad', label='Supp Reader (+)'), Patch(facecolor='#c39bd3', label='Supp Reader (−)'),
+    Patch(facecolor='#2980b9', label='Writer'), Patch(facecolor='#85c1e9', label='Writer'),
+    Patch(facecolor='#e74c3c', label='Eraser'),
+    Patch(facecolor='#e67e22', label='Onco Reader'), Patch(facecolor='#f0b27a', label='Onco Reader'),
+    Patch(facecolor='#8e44ad', label='Supp Reader'), Patch(facecolor='#c39bd3', label='Supp Reader'),
 ]
 ax.legend(handles=legend_els, fontsize=8, loc='lower left', ncol=4)
 plt.tight_layout()
