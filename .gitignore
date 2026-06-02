@@ -14,12 +14,22 @@ __pycache__/
 *.DS_Store
 
 # Data files (large, access-controlled — never commit raw data)
+# .gitkeep files are kept to preserve directory structure
 *.h5
 *.hdf5
 *.feather
 *.parquet
-/data/
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
 
-# Unrelated / in-progress sub-projects (not part of the m6A RNA-seq analysis)
+# Generated results — logs and alignments are not committed; figures/tables are
+results/logs/*
+!results/logs/.gitkeep
+results/aligned/*
+!results/aligned/.gitkeep
+
+# Unrelated in-progress sub-projects
 plots_cutandrun/
 m6a_cell_lines/

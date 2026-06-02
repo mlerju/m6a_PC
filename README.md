@@ -13,46 +13,52 @@ from normal prostate through to metastatic castration-resistant disease
 (mCRPC) — and that this reprogramming is mechanistically coupled to AR
 transcriptional activity, particularly via the RBM15/RBM15B writer paralog axis.
 
-Six coordinated analyses are implemented:
-
-| Script | Question | Output |
-|--------|----------|--------|
-| `mcrpc_analysis.py` | Three-axis m6A model in mCRPC; LR weight derivation | `plots_mcrpc/` |
-| `cross_cohort.py` | m6A trajectory across 6 disease stages (Normal → mCRPC-SCNC) | `plots_cross_cohort/` |
-| `ar_m6a_analysis.py` | AR × m6A coupling mechanism in mCRPC + TCGA validation | `plots_ar_m6a/` |
-| `ar_crosscohort_analysis.py` | AR Activity Score trajectory across disease stages | `plots_ar_crosscohort/` |
-| `ar_m6a_summary_figures.py` | Publication-ready AR × m6A summary panels | `plots_ar_m6a_summary/` |
-| `tcga_immune_m6a.py` | m6A writers × CIBERSORT immune fractions; RBM15B × ARS (TCGA) | `plots_tcga_immune/` |
-
 ---
 
 ## Project structure
 
 ```
 bulk_rnaseq/
-├── m6a/                        # Shared library (import as `from m6a.xxx import ...`)
-│   ├── __init__.py             # Package docstring and module index
+│
+├── m6a/                        # Shared Python library
 │   ├── config.py               # Data paths and output directories
-│   ├── genes.py                # m6A gene sets + AR target gene panel
+│   │                           # (set M6A_DATA_ROOT env var to override)
+│   ├── genes.py                # m6A gene sets + AR target gene panel (with sources)
 │   ├── normalization.py        # Percentile-rank and z-score normalization
-│   ├── scoring.py              # Three-axis score computation + LR weights
+│   ├── scoring.py              # Three-axis scoring + pre-computed LR weights
 │   ├── stats.py                # BH-FDR, Dunn post-hoc, rank-biserial, sig/fmt_p
 │   ├── plotting.py             # Violin-plot helpers
-│   └── data/
-│       ├── __init__.py         # Subpackage docs and contribution guide
-│       └── loaders.py          # Per-cohort data loaders
+│   └── data/loaders.py         # Per-cohort data loaders
 │
-├── cross_cohort.py
-├── mcrpc_analysis.py
-├── ar_m6a_analysis.py
-├── ar_crosscohort_analysis.py
-├── ar_m6a_summary_figures.py
-├── tcga_immune_m6a.py
-├── extract_mhspc_m6a.R         # R script for mHSPC microarray extraction
-├── download_tcga_normals.py    # Utility: download TCGA adjacent normals
+├── scripts/                    # Analysis scripts (run from project root)
+│   ├── mcrpc_analysis.py       # mCRPC 3-axis model; LR weight derivation
+│   ├── cross_cohort.py         # m6A trajectory: Normal → mCRPC-SCNC (6 groups)
+│   ├── ar_m6a_analysis.py      # AR × m6A coordination: mCRPC + TCGA validation
+│   ├── ar_crosscohort_analysis.py  # AR Activity Score trajectory across stages
+│   ├── ar_m6a_summary_figures.py   # Publication-ready AR × m6A panels
+│   ├── tcga_immune_m6a.py      # m6A × CIBERSORT immune + RBM15B × ARS (TCGA)
+│   ├── extract_mhspc_m6a.R     # R: extract mHSPC microarray expression
+│   └── download_tcga_normals.py    # Utility: download TCGA adjacent normals
 │
-├── environment.yml             # Reproducible conda/micromamba environment
-└── plots_*/                    # Generated output directories (one per script)
+├── results/
+│   ├── figures/
+│   │   ├── mcrpc/              # ← mcrpc_analysis.py output
+│   │   ├── cross_cohort/       # ← cross_cohort.py output
+│   │   ├── ar_m6a/             # ← ar_m6a_analysis.py output
+│   │   ├── ar_crosscohort/     # ← ar_crosscohort_analysis.py output
+│   │   ├── ar_summary/         # ← ar_m6a_summary_figures.py output
+│   │   └── tcga_immune/        # ← tcga_immune_m6a.py output
+│   ├── tables/                 # CSV outputs (correlation summaries, etc.)
+│   └── logs/                   # Run logs (gitignored)
+│
+├── envs/
+│   └── merip.yml               # Reproducible conda/micromamba environment
+│
+├── data/                       # Placeholder structure — actual data NOT committed
+│   ├── raw/                    # (gitignored)
+│   └── processed/              # (gitignored)
+│
+└── README.md
 ```
 
 ---
@@ -60,12 +66,12 @@ bulk_rnaseq/
 ## Data requirements
 
 Raw and processed data are **not included** in this repository (access-controlled
-or large files).  All paths resolve relative to a configurable data root.
+or large files). All paths resolve relative to a configurable data root.
 
 ### Setting the data root
 
-By default the code looks for data at `/mnt/biodata/data` (the lab NAS mount).
-Override this with an environment variable — **no code changes needed**:
+By default the code looks for data at `/mnt/biodata/data` (the lab NAS).
+Override without editing any code:
 
 ```bash
 export M6A_DATA_ROOT=/path/to/your/data
@@ -83,20 +89,15 @@ export M6A_DATA_ROOT=/path/to/your/data
 | DARANA (GSE197780) | `processed/darana_gse197780/` | GEO open access |
 | CIBERSORT fractions | `processed/tcga_prad/TCGA.Kallisto.fullIDs.cibersort.relative.tsv` | Open — Thorsson et al. 2018 |
 
-> **mHSPC microarray** (Davicioni collaboration): `processed/mhspc_array/` —
-> populate when files are received. Run `extract_mhspc_m6a.R` first to generate
-> the full-genome expression matrix.
-
 ---
 
 ## Setup
 
 ```bash
-# Create the environment
-micromamba create -f environment.yml
+micromamba create -f envs/merip.yml
 micromamba activate rnaseq
 
-# (Optional) set data root if different from /mnt/biodata/data
+# Optional: point to a different data root
 export M6A_DATA_ROOT=/your/data/path
 ```
 
@@ -104,35 +105,36 @@ export M6A_DATA_ROOT=/your/data/path
 
 ## Running the analyses
 
-Each script is self-contained and can be run independently.  The recommended
-order below mirrors the narrative progression of the project:
+Each script is self-contained. Recommended order mirrors the narrative arc:
 
 ```bash
-# 1. mCRPC intra-cohort model (~5 min)
-micromamba run -n rnaseq python mcrpc_analysis.py
+# 1. mCRPC intra-cohort model and LR weight derivation (~5 min)
+micromamba run -n rnaseq python scripts/mcrpc_analysis.py
 
-# 2. Cross-cohort m6A trajectory (~3 min)
-micromamba run -n rnaseq python cross_cohort.py
+# 2. Cross-cohort m6A disease-progression trajectory (~3 min)
+micromamba run -n rnaseq python scripts/cross_cohort.py
 
-# 3. AR × m6A mechanism in mCRPC + TCGA validation (~10 min)
-micromamba run -n rnaseq python ar_m6a_analysis.py
+# 3. AR × m6A coordination mechanism in mCRPC + TCGA validation (~10 min)
+micromamba run -n rnaseq python scripts/ar_m6a_analysis.py
 
-# 4. AR Activity Score cross-cohort trajectory (~5 min)
-micromamba run -n rnaseq python ar_crosscohort_analysis.py
+# 4. AR Activity Score trajectory across disease stages (~5 min)
+micromamba run -n rnaseq python scripts/ar_crosscohort_analysis.py
 
 # 5. Publication summary figures (~5 min)
-micromamba run -n rnaseq python ar_m6a_summary_figures.py
+micromamba run -n rnaseq python scripts/ar_m6a_summary_figures.py
 
 # 6. Immune landscape: m6A × CIBERSORT + RBM15B × ARS in TCGA (~3 min)
-micromamba run -n rnaseq python tcga_immune_m6a.py
+micromamba run -n rnaseq python scripts/tcga_immune_m6a.py
 ```
+
+All output goes to `results/figures/<analysis>/` and `results/tables/`.
 
 ---
 
 ## The m6A scoring model
 
-Three composite scores are computed from within-sample percentile-rank
-normalized expression of 22 m6A regulatory genes:
+Three composite scores computed from within-sample percentile-rank normalized
+expression of 22 m6A regulatory genes:
 
 | Score | Formula |
 |-------|---------|
@@ -141,8 +143,8 @@ normalized expression of 22 m6A regulatory genes:
 | **Functional Impact** | 0.435 × Net Deposition + 0.565 × Oncogenic Readout |
 
 LR writer weights were trained on the mCRPC cohort (59 SCNC vs 575 Adeno,
-L2 logistic regression, 5-fold CV AUC = 0.793).  The Functional Impact axis
-combination weights are Stage-2 LR values.  See `m6a/scoring.py` for details.
+L2 logistic regression, 5-fold CV AUC = 0.793). See `m6a/scoring.py` for
+weight values and `scripts/mcrpc_analysis.py` Part I for the derivation.
 
 ---
 
@@ -150,7 +152,6 @@ combination weights are Stage-2 LR values.  See `m6a/scoring.py` for details.
 
 - Thorsson et al. (2018) *Immunity* 48:812 — CIBERSORT pan-cancer immune landscape
 - Barbie et al. (2009) *Nature* 462:108 — ssGSEA (percentile-rank normalization)
-- Robinson et al. (2010) *Bioinformatics* — edgeR, log2-CPM normalization
 - Massie et al. (2011) *Nature* 474:467 — CAMKK2 as direct AR target
 - Linder et al. (2022) *Cancer Discov* — DARANA enzalutamide trial (GSE197780)
 

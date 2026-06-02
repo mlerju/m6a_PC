@@ -49,12 +49,14 @@ TCGA_CLINICAL       = os.path.join(TCGA_DIR,        'clinical.csv')
 TCGA_NORMAL_LOG2CPM = os.path.join(TCGA_NORMAL_DIR, 'expression_log2cpm.tsv')
 
 # ── Output directories ────────────────────────────────────────────────────────
-OUTDIR_CROSS_COHORT = os.path.join(_HERE, 'plots_cross_cohort')
-OUTDIR_MCRPC        = os.path.join(_HERE, 'plots_mcrpc')
-OUTDIR_PRESENTATION = os.path.join(_HERE, 'plots_presentation')
-OUTDIR_AR_M6A         = os.path.join(_HERE, 'plots_ar_m6a')
-OUTDIR_AR_CROSSCOHORT = os.path.join(_HERE, 'plots_ar_crosscohort')
-OUTDIR_AR_SUMMARY     = os.path.join(_HERE, 'plots_ar_m6a_summary')
+RESULTS_DIR           = os.path.join(_HERE, 'results')
+OUTDIR_MCRPC          = os.path.join(RESULTS_DIR, 'figures', 'mcrpc')
+OUTDIR_CROSS_COHORT   = os.path.join(RESULTS_DIR, 'figures', 'cross_cohort')
+OUTDIR_AR_M6A         = os.path.join(RESULTS_DIR, 'figures', 'ar_m6a')
+OUTDIR_AR_CROSSCOHORT = os.path.join(RESULTS_DIR, 'figures', 'ar_crosscohort')
+OUTDIR_AR_SUMMARY     = os.path.join(RESULTS_DIR, 'figures', 'ar_summary')
+OUTDIR_TCGA_IMMUNE    = os.path.join(RESULTS_DIR, 'figures', 'tcga_immune')
+OUTDIR_TABLES         = os.path.join(RESULTS_DIR, 'tables')
 
 # ── Cross-cohort group definitions (6 cohorts, in progression order) ─────────
 GROUP_LABELS = [
