@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """
-tcga_immune_m6a.py — m6A × macrophage/immune correlation in TCGA-PRAD primary.
+tcga_immune_m6a.py — m6A × immune landscape in TCGA-PRAD primary tumours.
 
-Correlates the expression of 22 m6A regulatory genes with CIBERSORT immune
-cell fractions (Thorsson et al. 2018, Immunity — pan-cancer Immune Landscape)
-in TCGA-PRAD primary tumour samples (n ≈ 499, after matched QC).
+Two complementary analyses in TCGA-PRAD primary tumour samples (n ≈ 499):
+
+  A) m6A writer/eraser/reader genes × CIBERSORT immune cell fractions
+     (Thorsson et al. 2018, Immunity — pan-cancer Immune Landscape).
+
+  B) RBM15B (m6A writer, AR-co-regulated) × AR Activity Score (ARS),
+     validating the mCRPC RBM15B–ARS axis in primary disease.
 
 Analyses:
   01  Correlation heatmap: 22 m6A genes × key immune populations
@@ -12,10 +16,13 @@ Analyses:
   02  m6A axis scores vs macrophage fractions (M1, M2, M1:M2 ratio)
   03  Top gene–immune scatter plots (up to 6 FDR-significant pairs)
   04  M1 & M2 macrophage fractions stratified by Gleason group
+  05  RBM15B expression vs AR Activity Score (Gleason-stratified scatter)
 
-Data source:
-  CIBERSORT fractions — TCGA.Kallisto.fullIDs.cibersort.relative.tsv
-  (GDC UUID b3df502e-3594-46ef-9f94-d041a20a0b9a, open access)
+Data sources:
+  Gene expression  — TCGA-PRAD HTSeq counts, loaded via m6a.data.loaders
+  CIBERSORT        — TCGA.Kallisto.fullIDs.cibersort.relative.tsv
+                     (GDC UUID b3df502e-3594-46ef-9f94-d041a20a0b9a, open access)
+  AR target genes  — m6a.genes.AR_TARGET_GENES (literature-curated panel)
 
 Output: plots_tcga_immune/
 
@@ -43,6 +50,8 @@ from m6a.genes import (
     ALL_M6A_GENES,
     WRITER_GENES, ERASER_GENES,
     READER_ONCOGENIC, READER_SUPPRESSIVE,
+    RNA_EDITOR_GENES,
+    AR_TARGET_GENES,
 )
 from m6a.stats import bh_fdr, sig, fmt_p, rankbiserial
 from m6a.normalization import percentile_rank_matrix, zscore_normalize
@@ -75,15 +84,16 @@ IMMUNE_LABELS = [
 ]
 
 # Role→gene mapping (for heatmap row ordering/colours)
-ROLE_ORDER = WRITER_GENES + ERASER_GENES + READER_ONCOGENIC + READER_SUPPRESSIVE
+ROLE_ORDER = WRITER_GENES + ERASER_GENES + READER_ONCOGENIC + READER_SUPPRESSIVE + RNA_EDITOR_GENES
 ROLE_COLORS = (
     ['#2980b9'] * len(WRITER_GENES) +
     ['#e74c3c'] * len(ERASER_GENES) +
     ['#f39c12'] * len(READER_ONCOGENIC) +
-    ['#27ae60'] * len(READER_SUPPRESSIVE)
+    ['#27ae60'] * len(READER_SUPPRESSIVE) +
+    ['#8e44ad'] * len(RNA_EDITOR_GENES)
 )
-ROLE_PATCH_LABELS = ['Writer', 'Eraser', 'Reader (onco.)', 'Reader (supp.)']
-ROLE_PATCH_COLORS = ['#2980b9', '#e74c3c', '#f39c12', '#27ae60']
+ROLE_PATCH_LABELS = ['Writer', 'Eraser', 'Reader (onco.)', 'Reader (supp.)', 'RNA Editor']
+ROLE_PATCH_COLORS = ['#2980b9', '#e74c3c', '#f39c12', '#27ae60', '#8e44ad']
 
 print("=" * 80)
 print("  m6A × MACROPHAGE IMMUNE CORRELATION — TCGA-PRAD PRIMARY")
@@ -92,7 +102,7 @@ print("=" * 80)
 # =============================================================================
 # DATA LOADING & MERGING
 # =============================================================================
-print("\n[1/4] Loading data ...")
+print("\n[1/5] Loading data ...")
 expr, clinical = load_tcga()   # samples × genes; index = TCGA-XX-XXXX
 
 # ── Load CIBERSORT ────────────────────────────────────────────────────────────
@@ -163,7 +173,7 @@ meta['gleason_group'] = pd.cut(
 print(f"    Gleason ≤7: {(meta['gleason_group'] == '≤7 (low–int)').sum()}  "
       f"≥8: {(meta['gleason_group'] == '≥8 (high)').sum()}")
 
-print("\n[2/4] Computing Spearman correlations (22 genes × 7 immune populations) ...")
+print("\n[2/5] Computing Spearman correlations (22 genes × 7 immune populations) ...")
 
 # =============================================================================
 # CORRELATION MATRIX
@@ -204,7 +214,7 @@ col_rename = dict(zip(IMMUNE_COLS, IMMUNE_LABELS))
 rho_plot = rho_df.rename(columns=col_rename)
 q_plot   = q_df.rename(columns=col_rename)
 
-print("\n[3/4] Generating plots ...")
+print("\n[3/5] Generating immune-correlation plots ...")
 
 # =============================================================================
 # PLOT 01 — Correlation heatmap
@@ -232,28 +242,26 @@ sns.heatmap(
 # Colour row tick labels by gene role
 for lbl, color in zip(ax.get_yticklabels(), role_colors_in):
     lbl.set_color(color)
-    lbl.set_fontweight('bold')
+
 ax.tick_params(axis='y', labelsize=9)
 ax.tick_params(axis='x', labelsize=9, rotation=30)
 
 ax.set_xlabel('')
 ax.set_ylabel('')
 ax.set_title(
-    'Spearman ρ: m6A genes × CIBERSORT immune fractions\n'
-    f'TCGA-PRAD primary (n={len(shared)}), FDR: * <0.05  ** <0.01  *** <0.001',
+    'Spearman ρ: m6A genes × CIBERSORT immune fractions (TCGA Primary Tumors)\n',
     fontsize=10, pad=10,
 )
 
 # Role legend
 from matplotlib.patches import Patch
-patches = [Patch(facecolor=c, label=l)
-           for c, l in zip(ROLE_PATCH_COLORS, ROLE_PATCH_LABELS)]
+patches = [Patch(facecolor=c, label=l) for c, l in zip(ROLE_PATCH_COLORS, ROLE_PATCH_LABELS)]
 ax.legend(handles=patches, bbox_to_anchor=(1.28, 1), loc='upper left',
-          fontsize=8, framealpha=0.8, title='Gene role')
+          fontsize=8, framealpha=0.8, title='Sample size')
 
 plt.tight_layout()
 out01 = os.path.join(OUTDIR, '01_m6a_immune_correlation_heatmap.png')
-fig.savefig(out01, bbox_inches='tight')
+fig.savefig(out01, bbox_inches='tight', dpi=300)
 plt.close(fig)
 print(f"      → Saved {out01}")
 
@@ -439,9 +447,66 @@ plt.close(fig)
 print(f"      → Saved {out04}")
 
 # =============================================================================
+# PLOT 05 — RBM15B expression vs AR Activity Score (TCGA primary)
+# =============================================================================
+print("\n[4/5] Generating RBM15B × ARS plot ...")
+print("    Plot 05: RBM15B vs AR Activity Score (TCGA primary) ...")
+
+_ar_avail = [g for g in AR_TARGET_GENES if g in expr.columns]
+if _ar_avail and 'RBM15B' in expr.columns:
+    # Z-score only the needed genes; use all TCGA samples (not just CIBERSORT overlap)
+    _ars_genes = list(set(_ar_avail + ['RBM15B']))
+    _z_ars = zscore_normalize(expr[_ars_genes])
+    _ars   = _z_ars[_ar_avail].mean(axis=1)
+
+    _shared_ars = _ars.dropna().index.intersection(_z_ars.index)
+    _x_rbm = _z_ars.loc[_shared_ars, 'RBM15B']
+    _y_ars  = _ars.loc[_shared_ars]
+    _r_rbm, _p_rbm = spearmanr(_x_rbm, _y_ars)
+
+    _gl    = clinical.reindex(_shared_ars)['gleason_score']
+    _gl_lo = _gl[_gl <= 7].index
+    _gl_hi = _gl[_gl >= 8].index
+    _gl_na = _gl[_gl.isna()].index
+
+    fig, ax = plt.subplots(figsize=(7, 6))
+    for _idx, _col, _lbl in [
+        (_gl_lo, '#3498db', f'Gleason ≤7 (n={len(_gl_lo)})'),
+        (_gl_hi, '#e74c3c', f'Gleason ≥8 (n={len(_gl_hi)})'),
+        (_gl_na, '#aaaaaa', f'Unknown (n={len(_gl_na)})'),
+    ]:
+        if len(_idx):
+            ax.scatter(_x_rbm[_idx], _y_ars[_idx],
+                       c=_col, alpha=0.55, s=28, edgecolors='none', label=_lbl)
+
+    _m_fit, _b_fit = np.polyfit(_x_rbm, _y_ars, 1)
+    _xl = np.linspace(_x_rbm.min(), _x_rbm.max(), 200)
+    ax.plot(_xl, _m_fit * _xl + _b_fit, color='black', lw=1.5, ls='--', alpha=0.7)
+
+    ax.set_xlabel('RBM15B expression (z-score)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('AR Activity Score', fontsize=12, fontweight='bold')
+    ax.set_title(
+        f'RBM15B Expression vs AR Activity Score\n'
+        f'TCGA-PRAD Primary Tumors (n={len(_shared_ars)})\n'
+        f'Spearman ρ={_r_rbm:+.3f}, p={_p_rbm:.2e} {sig(_p_rbm)}',
+        fontsize=11, fontweight='bold', pad=10,
+    )
+    ax.legend(fontsize=9, loc='best', framealpha=0.8)
+    ax.axhline(0, color='grey', lw=0.8, ls=':', alpha=0.6)
+    ax.axvline(0, color='grey', lw=0.8, ls=':', alpha=0.6)
+    plt.tight_layout()
+    out05 = os.path.join(OUTDIR, '05_rbm15b_ars_tcga.png')
+    fig.savefig(out05, bbox_inches='tight')
+    plt.close(fig)
+    print(f"      → Saved {out05}")
+    print(f"      RBM15B × ARS: ρ={_r_rbm:+.3f}, p={_p_rbm:.2e} {sig(_p_rbm)}, n={len(_shared_ars)}")
+else:
+    print("      RBM15B or AR target genes unavailable — skipping plot 05")
+
+# =============================================================================
 # SUMMARY TABLE
 # =============================================================================
-print("\n[4/4] Writing summary table ...")
+print("\n[5/5] Writing summary table ...")
 
 summary = (
     pd.DataFrame(records)

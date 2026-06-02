@@ -378,6 +378,35 @@ plt.savefig(os.path.join(OUTDIR, '05_m6A_gene_ARS_correlation.png'), dpi=300, bb
 print("  → Saved: 05_m6A_gene_ARS_correlation.png")
 plt.close()
 
+# --- 05b. RBM15B expression vs ARS scatter (mCRPC) ---------------------------
+print("\n--- Plot 05b: RBM15B expression vs ARS scatter (mCRPC) ---")
+_shared_rbm = ars.index.intersection(z_all.index)
+_x_rbm = z_all.loc[_shared_rbm, 'RBM15B']
+_y_ars = ars.loc[_shared_rbm]
+_r_rbm, _p_rbm = spearmanr(_x_rbm, _y_ars)
+
+fig, ax = plt.subplots(figsize=(7, 6))
+for hist, color, label in [('Adenocarcinoma', '#27ae60', 'Adenocarcinoma'),
+                             ('SCNC',          '#8e44ad', 'SCNC')]:
+    idx_h = meta.loc[_shared_rbm, 'histology'] == hist
+    ax.scatter(_x_rbm[idx_h], _y_ars[idx_h],
+               c=color, alpha=0.55, s=28, edgecolors='none', label=f'{label} (n={idx_h.sum()})')
+_m, _b = np.polyfit(_x_rbm, _y_ars, 1)
+_xline = np.linspace(_x_rbm.min(), _x_rbm.max(), 200)
+ax.plot(_xline, _m * _xline + _b, color='black', lw=1.5, ls='--', alpha=0.7)
+ax.set_xlabel('RBM15B expression (z-score)', fontsize=12, fontweight='bold')
+ax.set_ylabel('AR Activity Score', fontsize=12, fontweight='bold')
+ax.set_title(f'RBM15B Expression vs AR Activity Score (mCRPC)\n'
+             f'Spearman ρ={_r_rbm:+.3f}, p={_p_rbm:.2e} {sig(_p_rbm)}',
+             fontsize=12, fontweight='bold', pad=10)
+ax.legend(fontsize=9, loc='best', framealpha=0.8)
+ax.axhline(0, color='grey', lw=0.8, ls=':', alpha=0.6)
+ax.axvline(0, color='grey', lw=0.8, ls=':', alpha=0.6)
+plt.tight_layout()
+plt.savefig(os.path.join(OUTDIR, '05b_RBM15B_vs_ARS_scatter.png'), dpi=300, bbox_inches='tight')
+print("  → Saved: 05b_RBM15B_vs_ARS_scatter.png")
+plt.close()
+
 shared_idx = ars.index.intersection(df.index)
 cmap_hist  = meta.loc[df.index, 'histology'].map(
     {'Adenocarcinoma': '#27ae60', 'SCNC': '#8e44ad'}).fillna('grey')

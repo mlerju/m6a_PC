@@ -24,7 +24,8 @@ READER_ONCOGENIC = [
 READER_SUPPRESSIVE = [
     'YTHDF2', 'YTHDF3', 'YTHDC1', 'YTHDC2', 'HNRNPC', 'FMR1',
 ]
-ALL_M6A_GENES = WRITER_GENES + ERASER_GENES + READER_ONCOGENIC + READER_SUPPRESSIVE
+RNA_EDITOR_GENES = ['ADAR']
+ALL_M6A_GENES = WRITER_GENES + ERASER_GENES + READER_ONCOGENIC + READER_SUPPRESSIVE + RNA_EDITOR_GENES
 
 # IGF2BP Ensembl IDs for raw-count rescue in TCGA (VERSIONED IDs as in GENCODE)
 IGF2BP_ENSEMBL = {
@@ -35,7 +36,7 @@ IGF2BP_ENSEMBL = {
 
 # ── mCRPC analysis gene set (18 genes) ───────────────────────────────────────
 MCRPC_WRITER_GENES = [
-    'METTL3', 'METTL14', 'WTAP', 'ZC3H13', 'RBM15', 'RBM15B', 'CBLL1',
+    'METTL3', 'METTL14', 'WTAP', 'ZC3H13', 'RBM15', 'RBM15B', 'CBLL1', 'METTL16',
 ]
 MCRPC_ERASER_GENES = ['FTO', 'ALKBH5']
 MCRPC_READER_ONCOGENIC = ['IGF2BP1', 'IGF2BP2', 'IGF2BP3', 'YTHDF1']
@@ -53,6 +54,7 @@ MCRPC_GENE_ROLES = {
     'RBM15':   'Writer (Targeting)',
     'RBM15B':  'Writer (Targeting)',
     'CBLL1':   'Writer (E3 Ligase)',
+    'METTL16': 'Writer (rRNA/tRNA)',
     'FTO':     'Eraser',
     'ALKBH5':  'Eraser',
     'IGF2BP1': 'Reader (Oncogenic)',
