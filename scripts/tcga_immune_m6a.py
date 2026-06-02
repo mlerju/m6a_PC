@@ -238,7 +238,7 @@ sns.heatmap(
     linewidths=0.4, linecolor='#cccccc',
     square=True,
     annot_kws={'size': 9, 'color': 'black'},
-    cbar_kws={'label': 'Spearman ρ', 'shrink': 0.8},
+    cbar_kws={'label': 'Spearman ρ', 'shrink': 0.8, 'aspect': 5},
     ax=ax,
 )
 
@@ -248,7 +248,7 @@ ax.set_xlabel('')
 ax.set_ylabel('')
 ax.set_title(
     f'Spearman ρ: ADAR × CIBERSORT immune fractions (TCGA Primary Tumors, n = {_n})',
-    fontsize=10, pad=8,
+    fontsize=14, pad=10,
 )
 
 plt.tight_layout()
