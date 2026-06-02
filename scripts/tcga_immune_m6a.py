@@ -24,7 +24,8 @@ Data sources:
                      (GDC UUID b3df502e-3594-46ef-9f94-d041a20a0b9a, open access)
   AR target genes  — m6a.genes.AR_TARGET_GENES (literature-curated panel)
 
-Output: plots_tcga_immune/
+Output: results/figures/tcga_immune/  (figures)
+         results/tables/               (correlation_summary.csv)
 
 Usage:
     micromamba run -n rnaseq python tcga_immune_m6a.py
@@ -45,7 +46,7 @@ warnings.filterwarnings('ignore')
 plt.rcParams['savefig.dpi'] = 300
 
 # ── m6a package imports ───────────────────────────────────────────────────────
-from m6a.config import TCGA_DIR
+from m6a.config import TCGA_DIR, OUTDIR_TCGA_IMMUNE as OUTDIR, OUTDIR_TABLES
 from m6a.genes import (
     ALL_M6A_GENES,
     WRITER_GENES, ERASER_GENES,
@@ -58,8 +59,8 @@ from m6a.normalization import percentile_rank_matrix, zscore_normalize
 from m6a.scoring import compute_axes
 from m6a.data.loaders import load_tcga
 
-OUTDIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'plots_tcga_immune')
 os.makedirs(OUTDIR, exist_ok=True)
+os.makedirs(OUTDIR_TABLES, exist_ok=True)
 
 CIBERSORT_FILE = os.path.join(TCGA_DIR, 'TCGA.Kallisto.fullIDs.cibersort.relative.tsv')
 
@@ -515,7 +516,7 @@ summary = (
     [['gene', 'label', 'rho', 'q']]
     .rename(columns={'label': 'immune_cell', 'rho': 'spearman_rho', 'q': 'fdr_bh'})
 )
-summary_out = os.path.join(OUTDIR, 'correlation_summary.csv')
+summary_out = os.path.join(OUTDIR_TABLES, 'tcga_immune_correlation_summary.csv')
 summary.to_csv(summary_out, index=False, float_format='%.4f')
 print(f"    → {summary_out}")
 
