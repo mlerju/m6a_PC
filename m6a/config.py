@@ -1,9 +1,19 @@
 """
 m6a.config — Shared data paths, output directories, and group definitions.
 
+Data root
+---------
+All raw/processed data files are expected under a common base directory.
+By default this is /mnt/biodata/data (the lab NAS mount).  To use a
+different location without editing this file, set the environment variable::
+
+    export M6A_DATA_ROOT=/your/data/path
+
+before running any analysis script.
+
 Adding a new dataset
 --------------------
-1. Add its data path constant(s) here.
+1. Add its data path constant(s) here (using _DATA_ROOT below).
 2. If it belongs to a new group in the cross-cohort analysis, append its label
    and hex color to GROUP_LABELS / GROUP_COLORS / GROUP_LABELS_SHORT.
 3. Write a loader in m6a/data/loaders.py.
@@ -14,17 +24,20 @@ import os
 # ── Project root (parent of this file's directory) ──────────────────────────
 _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# ── Data root — override with M6A_DATA_ROOT env var if needed ────────────────
+_DATA_ROOT = os.environ.get('M6A_DATA_ROOT', '/mnt/biodata/data')
+
 # ── Data paths ───────────────────────────────────────────────────────────────
-MCRPC_DIR       = '/mnt/biodata/data/processed/mCRPC_cohort'
-TCGA_DIR        = '/mnt/biodata/data/processed/tcga_prad'
-GTEX_FILE       = '/mnt/biodata/data/raw/bulk_RNAseq/normalprost_GTEx/gene_tpm_v11_prostate.gct.gz'
-TCGA_NORMAL_DIR = '/mnt/biodata/data/processed/tcga_prad_normal'
-MHSPC_FILE      = '/mnt/biodata/data/processed/mhspc_gse221601/expression_log2tpm.tsv'
-DARANA_FILE     = '/mnt/biodata/data/processed/darana_gse197780/GSE197780_DARANA_GE_table.txt.gz'
+MCRPC_DIR       = os.path.join(_DATA_ROOT, 'processed/mCRPC_cohort')
+TCGA_DIR        = os.path.join(_DATA_ROOT, 'processed/tcga_prad')
+GTEX_FILE       = os.path.join(_DATA_ROOT, 'raw/bulk_RNAseq/normalprost_GTEx/gene_tpm_v11_prostate.gct.gz')
+TCGA_NORMAL_DIR = os.path.join(_DATA_ROOT, 'processed/tcga_prad_normal')
+MHSPC_FILE      = os.path.join(_DATA_ROOT, 'processed/mhspc_gse221601/expression_log2tpm.tsv')
+DARANA_FILE     = os.path.join(_DATA_ROOT, 'processed/darana_gse197780/GSE197780_DARANA_GE_table.txt.gz')
 
 # mHSPC microarray (Davicioni collaboration) — populate when files arrive:
-MHSPC_ARRAY_EXPR = '/mnt/biodata/data/processed/mhspc_array/mhspc_expression_full.tsv.gz'
-MHSPC_ARRAY_META = '/mnt/biodata/data/processed/mhspc_array/mhspc_m6a_metadata.tsv'
+MHSPC_ARRAY_EXPR = os.path.join(_DATA_ROOT, 'processed/mhspc_array/mhspc_expression_full.tsv.gz')
+MHSPC_ARRAY_META = os.path.join(_DATA_ROOT, 'processed/mhspc_array/mhspc_m6a_metadata.tsv')
 
 # Convenience sub-paths (used by loaders)
 MCRPC_LOG2CPM       = os.path.join(MCRPC_DIR,       'LumBasal_mCRPC_RNAseq_CLEANED_LOG2CPM.tsv')
