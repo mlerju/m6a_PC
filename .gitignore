@@ -2,8 +2,8 @@
 __pycache__/
 *.py[cod]
 *.pyo
-.venv/
 *.egg-info/
+.venv/
 
 # Jupyter
 .ipynb_checkpoints/
@@ -14,22 +14,22 @@ __pycache__/
 *.DS_Store
 
 # Data files (large, access-controlled — never commit raw data)
-# .gitkeep files are kept to preserve directory structure
 *.h5
 *.hdf5
 *.feather
 *.parquet
-data/raw/*
-!data/raw/.gitkeep
-data/processed/*
-!data/processed/.gitkeep
+m6a/data/raw/*
+!m6a/data/raw/.gitkeep
+m6a/data/processed/*
+!m6a/data/processed/.gitkeep
 
-# Generated results — logs and alignments are not committed; figures/tables are
-results/logs/*
-!results/logs/.gitkeep
-results/aligned/*
-!results/aligned/.gitkeep
+# Generated results — logs not committed
+m6a/results/logs/*
+!m6a/results/logs/.gitkeep
+m6a/results/aligned/*
+!m6a/results/aligned/.gitkeep
 
 # Unrelated in-progress sub-projects
 plots_cutandrun/
 m6a_cell_lines/
+plots_tcga_immune/
