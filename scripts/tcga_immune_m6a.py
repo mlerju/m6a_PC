@@ -11,7 +11,7 @@ Two complementary analyses in TCGA-PRAD primary tumour samples (n ≈ 499):
      validating the mCRPC RBM15B–ARS axis in primary disease.
 
 Analyses:
-  01  ADAR × CIBERSORT immune fractions (bar chart, FDR-annotated, n in legend)
+  01  ADAR × CIBERSORT immune fractions (single-row heatmap, n in title)
   02  m6A axis scores vs macrophage fractions (M1, M2, M1:M2 ratio)
   03  Top gene–immune scatter plots (up to 6 FDR-significant pairs)
   04  M1 & M2 macrophage fractions stratified by Gleason group
@@ -217,47 +217,42 @@ q_plot   = q_df.rename(columns=col_rename)
 print("\n[3/5] Generating immune-correlation plots ...")
 
 # =============================================================================
-# PLOT 01 — ADAR × immune fractions (bar chart)
+# PLOT 01 — ADAR × immune fractions (single-row heatmap)
 # =============================================================================
-print("    Plot 01: ADAR × immune fractions ...")
+print("    Plot 01: ADAR × immune fractions heatmap ...")
 
-_adar_rho = rho_df.loc['ADAR']
-_adar_q   = q_df.loc['ADAR']
+_adar_rho = rho_df.loc[['ADAR']].rename(columns=col_rename)   # 1 × 7 DataFrame
+_adar_q   = q_df.loc[['ADAR']].rename(columns=col_rename)
 _n = (expr_m['ADAR'].notna() & ciber_m[IMMUNE_COLS[0]].fillna(0).notna()).sum()
 
-_rhos = [_adar_rho[ic] for ic in IMMUNE_COLS]
-_qs   = [_adar_q[ic]   for ic in IMMUNE_COLS]
+_annot = _adar_q.applymap(lambda q: '***' if q < 0.001 else
+                                    '**'  if q < 0.01  else
+                                    '*'   if q < 0.05  else '')
 
-fig, ax = plt.subplots(figsize=(5, 4))
+fig, ax = plt.subplots(figsize=(9, 1.8))
 
-bar_colors = ['#888888' if q < 0.05 else '#cccccc' for q in _qs]
-ax.barh(IMMUNE_LABELS, _rhos, color=bar_colors, edgecolor='black',
-        linewidth=0.6, height=0.6)
+sns.heatmap(
+    _adar_rho,
+    annot=_annot, fmt='s',
+    cmap='RdBu_r', center=0, vmin=-0.35, vmax=0.35,
+    linewidths=0.4, linecolor='#cccccc',
+    square=True,
+    annot_kws={'size': 9, 'color': 'black'},
+    cbar_kws={'label': 'Spearman ρ', 'shrink': 0.8},
+    ax=ax,
+)
 
-for i, (rho, q) in enumerate(zip(_rhos, _qs)):
-    star = '***' if q < 0.001 else '**' if q < 0.01 else '*' if q < 0.05 else ''
-    if star:
-        offset = 0.005 if rho >= 0 else -0.005
-        ax.text(rho + offset, i, star, va='center',
-                ha='left' if rho >= 0 else 'right', fontsize=9, fontweight='bold')
-
-ax.axvline(0, color='black', linewidth=0.8)
-ax.set_xlabel('Spearman ρ', fontsize=10)
-ax.set_title('ADAR × CIBERSORT immune fractions\nTCGA-PRAD primary tumors', fontsize=10, pad=8)
-ax.tick_params(axis='y', labelsize=9)
-ax.tick_params(axis='x', labelsize=8)
-
-from matplotlib.patches import Patch
-legend_elements = [
-    Patch(facecolor='#888888', edgecolor='black', linewidth=0.6,
-          label=f'FDR < 0.05  (n = {_n})'),
-    Patch(facecolor='#cccccc', edgecolor='black', linewidth=0.6,
-          label='FDR ≥ 0.05'),
-]
-ax.legend(handles=legend_elements, fontsize=8, loc='lower right', framealpha=0.8)
+ax.set_yticklabels(['ADAR'], fontsize=10, rotation=0)
+ax.tick_params(axis='x', labelsize=9, rotation=30)
+ax.set_xlabel('')
+ax.set_ylabel('')
+ax.set_title(
+    f'Spearman ρ: ADAR × CIBERSORT immune fractions (TCGA Primary Tumors, n = {_n})',
+    fontsize=10, pad=8,
+)
 
 plt.tight_layout()
-out01 = os.path.join(OUTDIR, '01_adar_immune_correlations.png')
+out01 = os.path.join(OUTDIR, '01_adar_immune_heatmap.png')
 fig.savefig(out01, bbox_inches='tight', dpi=300)
 plt.close(fig)
 print(f"      → Saved {out01}")
