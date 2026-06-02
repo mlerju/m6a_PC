@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "m6a-pca"
+version = "0.1.0"
+description = "m6A epitranscriptomic analysis in prostate cancer"
+requires-python = ">=3.11"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["m6a*"]

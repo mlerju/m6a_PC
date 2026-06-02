@@ -17,6 +17,7 @@ Analyses:
   03  Top gene–immune scatter plots (up to 6 FDR-significant pairs)
   04  M1 & M2 macrophage fractions stratified by Gleason group
   05  RBM15B expression vs AR Activity Score (Gleason-stratified scatter)
+  06  ADAR × immune fractions focused bar chart (FDR-annotated, n in legend)
 
 Data sources:
   Gene expression  — TCGA-PRAD HTSeq counts, loaded via m6a.data.loaders
@@ -215,7 +216,7 @@ col_rename = dict(zip(IMMUNE_COLS, IMMUNE_LABELS))
 rho_plot = rho_df.rename(columns=col_rename)
 q_plot   = q_df.rename(columns=col_rename)
 
-print("\n[3/5] Generating immune-correlation plots ...")
+print("\n[3/6] Generating immune-correlation plots ...")
 
 # =============================================================================
 # PLOT 01 — Correlation heatmap
@@ -450,7 +451,7 @@ print(f"      → Saved {out04}")
 # =============================================================================
 # PLOT 05 — RBM15B expression vs AR Activity Score (TCGA primary)
 # =============================================================================
-print("\n[4/5] Generating RBM15B × ARS plot ...")
+print("\n[4/6] Generating RBM15B × ARS plot ...")
 print("    Plot 05: RBM15B vs AR Activity Score (TCGA primary) ...")
 
 _ar_avail = [g for g in AR_TARGET_GENES if g in expr.columns]
@@ -507,7 +508,72 @@ else:
 # =============================================================================
 # SUMMARY TABLE
 # =============================================================================
-print("\n[5/5] Writing summary table ...")
+print("\n[5/6] Generating ADAR × immune subplot ...")
+
+# =============================================================================
+# PLOT 06 — ADAR × immune fractions (focused bar chart)
+# =============================================================================
+print("    Plot 06: ADAR × immune fractions ...")
+
+if 'ADAR' in rho_df.index:
+    _adar_rho = rho_df.loc['ADAR']          # one ρ per immune fraction
+    _adar_q   = q_df.loc['ADAR']
+
+    # Compute n for each fraction (non-NaN pairwise)
+    _n_vals = {
+        ic: (expr_m['ADAR'].notna() & ciber_m[ic].fillna(0).notna()).sum()
+        for ic in IMMUNE_COLS
+    }
+    _n = min(_n_vals.values())   # all fractions share the same sample set
+
+    _labels = IMMUNE_LABELS
+    _rhos   = [_adar_rho[ic] for ic in IMMUNE_COLS]
+    _qs     = [_adar_q[ic]   for ic in IMMUNE_COLS]
+
+    fig, ax = plt.subplots(figsize=(5, 4))
+
+    colors = ['#cccccc' if q >= 0.05 else '#888888' for q in _qs]
+    bars = ax.barh(_labels, _rhos, color=colors, edgecolor='black',
+                   linewidth=0.6, height=0.6)
+
+    # Significance stars at bar tip
+    for i, (rho, q) in enumerate(zip(_rhos, _qs)):
+        star = '***' if q < 0.001 else '**' if q < 0.01 else '*' if q < 0.05 else ''
+        if star:
+            x_pos = rho + (0.005 if rho >= 0 else -0.005)
+            ha = 'left' if rho >= 0 else 'right'
+            ax.text(x_pos, i, star, va='center', ha=ha, fontsize=9,
+                    fontweight='bold', color='black')
+
+    ax.axvline(0, color='black', linewidth=0.8, linestyle='-')
+    ax.set_xlabel("Spearman ρ", fontsize=10)
+    ax.set_title("ADAR × CIBERSORT immune fractions\nTCGA-PRAD primary tumors",
+                 fontsize=10, pad=8)
+    ax.tick_params(axis='y', labelsize=9)
+    ax.tick_params(axis='x', labelsize=8)
+
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor='#888888', edgecolor='black', linewidth=0.6,
+              label=f'FDR < 0.05  (n = {_n})'),
+        Patch(facecolor='#cccccc', edgecolor='black', linewidth=0.6,
+              label='FDR ≥ 0.05'),
+    ]
+    ax.legend(handles=legend_elements, fontsize=8, loc='lower right',
+              framealpha=0.8)
+
+    plt.tight_layout()
+    out06 = os.path.join(OUTDIR, '06_adar_immune_correlations.png')
+    fig.savefig(out06, bbox_inches='tight')
+    plt.close(fig)
+    print(f"      → Saved {out06}")
+else:
+    print("      ADAR not available in expression matrix — skipping plot 06")
+
+# =============================================================================
+# SUMMARY TABLE
+# =============================================================================
+print("\n[6/6] Writing summary table ...")
 
 summary = (
     pd.DataFrame(records)
