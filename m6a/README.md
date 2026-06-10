@@ -159,4 +159,4 @@ weight values and `scripts/mcrpc_analysis.py` Part I for the derivation.
 
 ## Contact
 
-Miguel Lermajuarez · mlermajuarez@gmail.com · YC Lab
+Miguel Lerma · mlermajuarez@gmail.com · YC Lab · Lund University
